@@ -15,6 +15,8 @@ pub enum SnapshotType {
     Diff,
     /// Full snapshot.
     Full,
+    /// Sync
+    Sync
 }
 
 impl Default for SnapshotType {

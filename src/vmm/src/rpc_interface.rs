@@ -649,6 +649,17 @@ impl RuntimeApiController {
                     elapsed_time_us
                 );
             }
+            SnapshotType::Sync => {
+                let elapsed_time_us = update_metric_with_elapsed_time(
+                    &METRICS.latencies_us.vmm_sync_create_snapshot,
+                    create_start_us,
+                );
+                info!(
+                    "'sync diff snapshot' VMM action took {} us.",
+                    elapsed_time_us
+                );
+            }
+            
         }
         Ok(VmmData::Empty)
     }

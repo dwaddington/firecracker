@@ -436,6 +436,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcasapi"
+version = "0.1.0"
+source = "git+https://github.com/dwaddington/rust-mcasapi#bf059aa05b76a1bcb9b98cced3f5f32d0c66b995"
+
+[[package]]
 name = "memchr"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -914,6 +919,7 @@ dependencies = [
  "libc",
  "linux-loader",
  "logger",
+ "mcasapi",
  "mmds",
  "rate_limiter",
  "seccompiler",

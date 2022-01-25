@@ -617,6 +617,8 @@ pub struct PerformanceMetrics {
     pub full_create_snapshot: SharedStoreMetric,
     /// Measures the snapshot diff create time, at the API (user) level, in microseconds.
     pub diff_create_snapshot: SharedStoreMetric,
+    /// Measures the snapshot sync create time, at the API (user) level, in microseconds.
+    pub sync_create_snapshot: SharedStoreMetric,
     /// Measures the snapshot load time, at the API (user) level, in microseconds.
     pub load_snapshot: SharedStoreMetric,
     /// Measures the microVM pausing duration, at the API (user) level, in microseconds.
@@ -627,6 +629,8 @@ pub struct PerformanceMetrics {
     pub vmm_full_create_snapshot: SharedStoreMetric,
     /// Measures the snapshot diff create time, at the VMM level, in microseconds.
     pub vmm_diff_create_snapshot: SharedStoreMetric,
+    /// Measures the sync snapshot full create time, at the VMM level, in microseconds.
+    pub vmm_sync_create_snapshot: SharedStoreMetric,
     /// Measures the snapshot load time, at the VMM level, in microseconds.
     pub vmm_load_snapshot: SharedStoreMetric,
     /// Measures the microVM pausing duration, at the VMM level, in microseconds.

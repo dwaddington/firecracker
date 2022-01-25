@@ -29,7 +29,7 @@ use cpuid::common::{get_vendor_id_from_cpuid, get_vendor_id_from_host};
 use crate::vmm_config::instance_info::InstanceInfo;
 #[cfg(target_arch = "aarch64")]
 use arch::regs::{get_manufacturer_id_from_host, get_manufacturer_id_from_state};
-use logger::{error, info};
+use logger::{debug, error, info};
 use seccompiler::BpfThreadMap;
 use snapshot::Snapshot;
 use versionize::{VersionMap, Versionize, VersionizeResult};
@@ -235,14 +235,25 @@ pub fn create_snapshot(
         .save_state()
         .map_err(CreateSnapshotError::MicrovmState)?;
 
-    snapshot_state_to_file(
-        &microvm_state,
-        &params.snapshot_path,
-        snapshot_data_version,
-        version_map,
-    )?;
+    if params.snapshot_type == SnapshotType::Sync {
+        snapshot_state_to_sync(
+            &microvm_state,
+            &params.snapshot_path,
+            snapshot_data_version,
+            version_map,
+        )?;
 
-    snapshot_memory_to_file(vmm, &params.mem_file_path, &params.snapshot_type)?;
+        snapshot_memory_to_sync(vmm, &params.mem_file_path, &params.snapshot_type)?;
+    } else {
+        snapshot_state_to_file(
+            &microvm_state,
+            &params.snapshot_path,
+            snapshot_data_version,
+            version_map,
+        )?;
+
+        snapshot_memory_to_file(vmm, &params.mem_file_path, &params.snapshot_type)?;
+    }
 
     Ok(())
 }
@@ -298,6 +309,71 @@ fn snapshot_memory_to_file(
                 .map_err(Memory)
         }
         SnapshotType::Full => vmm.guest_memory().dump(&mut file).map_err(Memory),
+        SnapshotType::Sync => return Ok(()),
+    }?;
+    file.flush().map_err(|e| MemoryBackingFile("flush", e))?;
+    file.sync_all()
+        .map_err(|e| MemoryBackingFile("sync_all", e))
+}
+
+fn snapshot_state_to_sync(
+    microvm_state: &MicrovmState,
+    snapshot_path: &Path,
+    snapshot_data_version: u16,
+    version_map: VersionMap,
+) -> std::result::Result<(), CreateSnapshotError> {
+    use self::CreateSnapshotError::*;
+
+    debug!("snapshot state to sync");
+
+    let mut snapshot_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(snapshot_path)
+        .map_err(|e| SnapshotBackingFile("open", e))?;
+
+    let mut snapshot = Snapshot::new(version_map, snapshot_data_version);
+    snapshot
+        .save(&mut snapshot_file, microvm_state)
+        .map_err(SerializeMicrovmState)?;
+    snapshot_file
+        .flush()
+        .map_err(|e| SnapshotBackingFile("flush", e))?;
+    snapshot_file
+        .sync_all()
+        .map_err(|e| SnapshotBackingFile("sync_all", e))
+}
+
+fn snapshot_memory_to_sync(
+    vmm: &Vmm,
+    mem_file_path: &Path,
+    snapshot_type: &SnapshotType,
+) -> std::result::Result<(), CreateSnapshotError> {
+    use self::CreateSnapshotError::*;
+
+    debug!("snapshot memory to sync");
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(mem_file_path)
+        .map_err(|e| MemoryBackingFile("open", e))?;
+
+    // Set the length of the file to the full size of the memory area.
+    let mem_size_mib = mem_size_mib(vmm.guest_memory());
+    file.set_len((mem_size_mib * 1024 * 1024) as u64)
+        .map_err(|e| MemoryBackingFile("set_length", e))?;
+
+    match snapshot_type {
+        SnapshotType::Diff => {
+            let dirty_bitmap = vmm.get_dirty_bitmap().map_err(DirtyBitmap)?;
+            vmm.guest_memory()
+                .dump_dirty(&mut file, &dirty_bitmap)
+                .map_err(Memory)
+        }
+        SnapshotType::Full => vmm.guest_memory().dump(&mut file).map_err(Memory),
+        SnapshotType::Sync => return Ok(()),
     }?;
     file.flush().map_err(|e| MemoryBackingFile("flush", e))?;
     file.sync_all()
