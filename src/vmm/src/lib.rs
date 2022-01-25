@@ -31,6 +31,8 @@ pub mod version_map;
 /// Wrappers over structures used to configure the VMM.
 pub mod vmm_config;
 mod vstate;
+/// Synchronization support
+pub mod sync;
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
