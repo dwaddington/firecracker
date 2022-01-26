@@ -29,7 +29,7 @@ use cpuid::common::{get_vendor_id_from_cpuid, get_vendor_id_from_host};
 use crate::vmm_config::instance_info::InstanceInfo;
 #[cfg(target_arch = "aarch64")]
 use arch::regs::{get_manufacturer_id_from_host, get_manufacturer_id_from_state};
-use logger::{debug, error, info};
+use logger::{error, info};
 use seccompiler::BpfThreadMap;
 use snapshot::Snapshot;
 use versionize::{VersionMap, Versionize, VersionizeResult};
@@ -245,7 +245,7 @@ pub fn create_snapshot(
             version_map,
         )?;
 
-        snapshot_memory_to_sync(vmm, &params.mem_file_path, &params.snapshot_type)?;
+        snapshot_memory_to_sync(vmm, "127.0.0.1:2222", &params.snapshot_type)?;
     } else {
         snapshot_state_to_file(
             &microvm_state,
