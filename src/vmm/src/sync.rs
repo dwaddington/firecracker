@@ -8,6 +8,7 @@ use snapshot::Snapshot;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::TcpStream;
+use std::io::Cursor;
 
 use versionize::VersionMap;
 use vm_memory::{GuestAddress, MemoryRegionAddress};
@@ -78,9 +79,20 @@ pub fn snapshot_memory_to_sync(
     let memory_regions = vmm.guest_memory().describe();
 
     // seccomp needs to be set to allow us to allocate new memory
-    let mut dump_copy = Vec::with_capacity((mem_size_mib * 1024 * 1024) as usize);
-    vmm.guest_memory().dump(&mut dump_copy).map_err(Memory)?;
-    info!("snapshot_memory_to_sync: copied memory to new region {}",dump_copy.len());
+    let buffer_memory = Vec::with_capacity((mem_size_mib * 1024 * 1024) as usize);
+    let mut buffer = Cursor::new(buffer_memory);
+    
+
+    // send dirty pages
+    let dirty_bitmap = vmm.get_dirty_bitmap().map_err(DirtyBitmap)?;
+    vmm.guest_memory()
+        .dump_dirty(&mut buffer, &dirty_bitmap)
+        .map_err(Memory);
+
+    stream.write(buffer.get_ref());
+
+//    vmm.guest_memory().dump(&mut dump_copy).map_err(Memory)?;
+    info!("snapshot_memory_to_sync: copied memory to new region");
     
     for region in memory_regions.regions {
         debug!("memory region -> addr:{:#X} size:{}MiB", region.base_address, region.size / (1024*1024));
@@ -89,12 +101,7 @@ pub fn snapshot_memory_to_sync(
     }
 
 
-    // send dirty pages
-    let dirty_bitmap = vmm.get_dirty_bitmap().map_err(DirtyBitmap)?;
-    vmm.guest_memory()
-        .dump_dirty(&mut stream, &dirty_bitmap)
-        .map_err(Memory);
-
+  
     
     //    debug!("memory state -> {:?}", memory_state);
     // diff
