@@ -61,13 +61,14 @@ use devices::virtio::{
 };
 use devices::BusDevice;
 use event_manager::{EventManager as BaseEventManager, EventOps, Events, MutEventSubscriber};
-use logger::{error, info, warn, LoggerError, MetricsError, METRICS};
+use logger::{debug, error, info, warn, LoggerError, MetricsError, METRICS};
 use rate_limiter::BucketUpdate;
 use seccompiler::BpfProgram;
 use snapshot::Persist;
 use utils::epoll::EventSet;
 use utils::eventfd::EventFd;
 use vm_memory::{GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
+use std::io::Cursor;
 
 /// Shorthand type for the EventManager flavour used by Firecracker.
 pub type EventManager = BaseEventManager<Arc<Mutex<dyn MutEventSubscriber>>>;
@@ -235,6 +236,22 @@ pub(crate) fn mem_size_mib(guest_memory: &GuestMemoryMmap) -> u64 {
     guest_memory.iter().map(|region| region.len()).sum::<u64>() >> 20
 }
 
+/// Remote synchronization state
+pub struct SyncState {
+    x : u32,
+    buffer : Vec<u8>,
+}
+
+impl SyncState {
+    /// Instantiate new sync state
+    pub fn new() -> SyncState {
+        SyncState {
+            x: 0,
+            buffer : Vec::<u8>::with_capacity(4*1024*1024*1024),
+        }
+    }
+}
+        
 /// Contains the state and associated methods required for the Firecracker VMM.
 pub struct Vmm {
     events_observer: Option<Box<dyn VmmEventsObserver>>,
@@ -252,9 +269,18 @@ pub struct Vmm {
     mmio_device_manager: MMIODeviceManager,
     #[cfg(target_arch = "x86_64")]
     pio_device_manager: PortIODeviceManager,
+    sync_state: SyncState,
 }
 
 impl Vmm {
+    /// Update sync state
+    pub fn update_sync_state(&mut self) {
+        self.sync_state.x = 2;
+        let mut buffer = Cursor::new(&mut self.sync_state.buffer);
+        self.guest_memory.dump(&mut buffer).expect("update sync dump failed");
+        debug!("dump to sync-state complete!");
+    }
+    
     /// Gets Vmm version.
     pub fn version(&self) -> String {
         self.instance_info.vmm_version.clone()

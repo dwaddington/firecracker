@@ -53,52 +53,54 @@ pub fn snapshot_state_to_sync(
 
 /// Synchronize snapshot memory
 pub fn snapshot_memory_to_sync(
-    vmm: &Vmm,
+    vmm: &mut Vmm,
     url: &str,
     snapshot_type: &SnapshotType,
 ) -> std::result::Result<(), CreateSnapshotError> {
     use self::CreateSnapshotError::*;
 
-    let mut stream = TcpStream::connect(url).expect("unable to connect to remote server");
-    // let mut file = OpenOptions::new()
-    //     .write(true)
-    //     .create(true)
-    //     .truncate(true)
-    //     .open(mem_file_path)
-    //     .map_err(|e| MemoryBackingFile("open", e))?;
-    //    file.set_len((mem_size_mib * 1024 * 1024) as u64)
-  //      .map_err(|e| MemoryBackingFile("set_length", e))?;
+    vmm.update_sync_state();
+    
+//     let mut stream = TcpStream::connect(url).expect("unable to connect to remote server");
+//     // let mut file = OpenOptions::new()
+//     //     .write(true)
+//     //     .create(true)
+//     //     .truncate(true)
+//     //     .open(mem_file_path)
+//     //     .map_err(|e| MemoryBackingFile("open", e))?;
+//     //    file.set_len((mem_size_mib * 1024 * 1024) as u64)
+//   //      .map_err(|e| MemoryBackingFile("set_length", e))?;
 
     
-    // Set the length of the file to the full size of the memory area.
-    let mem_size_mib = mem_size_mib(vmm.guest_memory());
-    debug!("snapshot_memory_to_sync: size MiB = {}", &mem_size_mib);
+//     // Set the length of the file to the full size of the memory area.
+//     let mem_size_mib = mem_size_mib(vmm.guest_memory());
+//     debug!("snapshot_memory_to_sync: size MiB = {}", &mem_size_mib);
 
-    assert!(snapshot_type == &SnapshotType::Sync);
+//     assert!(snapshot_type == &SnapshotType::Sync);
 
-    let memory_regions = vmm.guest_memory().describe();
+//     let memory_regions = vmm.guest_memory().describe();
 
-    // seccomp needs to be set to allow us to allocate new memory
-    let buffer_memory = Vec::with_capacity((mem_size_mib * 1024 * 1024) as usize);
-    let mut buffer = Cursor::new(buffer_memory);
+//     // seccomp needs to be set to allow us to allocate new memory
+//     let buffer_memory = Vec::with_capacity((mem_size_mib * 1024 * 1024) as usize);
+//     let mut buffer = Cursor::new(buffer_memory);
     
 
-    // send dirty pages
-    let dirty_bitmap = vmm.get_dirty_bitmap().map_err(DirtyBitmap)?;
-    vmm.guest_memory()
-        .dump_dirty(&mut buffer, &dirty_bitmap)
-        .map_err(Memory);
+//     // send dirty pages
+//     let dirty_bitmap = vmm.get_dirty_bitmap().map_err(DirtyBitmap)?;
+//     vmm.guest_memory()
+//         .dump_dirty(&mut buffer, &dirty_bitmap)
+//         .map_err(Memory);
 
-    stream.write(buffer.get_ref());
+//     stream.write(buffer.get_ref());
 
-//    vmm.guest_memory().dump(&mut dump_copy).map_err(Memory)?;
-    info!("snapshot_memory_to_sync: copied memory to new region");
+// //    vmm.guest_memory().dump(&mut dump_copy).map_err(Memory)?;
+//     info!("snapshot_memory_to_sync: copied memory to new region");
     
-    for region in memory_regions.regions {
-        debug!("memory region -> addr:{:#X} size:{}MiB", region.base_address, region.size / (1024*1024));
-        let ga = GuestAddress(region.base_address);
-        let raw_slice = unsafe { std::slice::from_raw_parts(region.base_address as *const u8, region.size); };
-    }
+//     for region in memory_regions.regions {
+//         debug!("memory region -> addr:{:#X} size:{}MiB", region.base_address, region.size / (1024*1024));
+//         let ga = GuestAddress(region.base_address);
+//         let raw_slice = unsafe { std::slice::from_raw_parts(region.base_address as *const u8, region.size); };
+//     }
 
 
   
