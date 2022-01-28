@@ -9,7 +9,10 @@
 //! and other virtualization features to run a single lightweight micro-virtual
 //! machine (microVM).
 #![deny(missing_docs)]
-
+#![feature(slice_ptr_len)]
+#![feature(slice_pattern)]
+#![feature(vec_into_raw_parts)]
+    
 /// Handles setup and initialization a `Vmm` object.
 pub mod builder;
 pub(crate) mod device_manager;
@@ -238,18 +241,20 @@ pub(crate) fn mem_size_mib(guest_memory: &GuestMemoryMmap) -> u64 {
 
 /// Remote synchronization state
 pub struct SyncState {
-    x : u32,
+    dirty : bool,
     buffer : Vec<u8>,
 }
+
+static INITIAL_SNAPSHOT_BUFFER_SIZE : usize = 4 * 1024 * 1024 * 1024;
 
 impl SyncState {
     /// Instantiate new sync state
     pub fn new() -> SyncState {
         SyncState {
-            x: 0,
-            buffer : Vec::<u8>::with_capacity(4*1024*1024*1024),
+            dirty : false,
+            buffer : vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE]
         }
-    }
+    }        
 }
         
 /// Contains the state and associated methods required for the Firecracker VMM.
@@ -275,9 +280,20 @@ pub struct Vmm {
 impl Vmm {
     /// Update sync state
     pub fn update_sync_state(&mut self) {
-        self.sync_state.x = 2;
+        let mut total_size : usize = 0;
+
+        for r in self.guest_memory.describe().regions {
+            total_size += r.size;
+        }
+        
+        if total_size > self.sync_state.buffer.len() {
+            self.sync_state.buffer.resize(total_size - self.sync_state.buffer.len(), 0);
+            debug!("update_sync_state: expanded memory to {}", &self.sync_state.buffer.len());
+        }
+        
         let mut buffer = Cursor::new(&mut self.sync_state.buffer);
         self.guest_memory.dump(&mut buffer).expect("update sync dump failed");
+        self.sync_state.dirty = true;
         debug!("dump to sync-state complete!");
     }
     

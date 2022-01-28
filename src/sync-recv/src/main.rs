@@ -4,7 +4,7 @@ use std::thread;
 use std::io::{Read};
 
 fn handle_client(mut stream: TcpStream) {
-    let mut data = [0 as u8; 4*1024*1024]; // using 4KiB buffer
+    let mut data = [0 as u8; 4*1024]; // using 4KiB buffer
     while match stream.read(&mut data) {
         Ok(size) => {
             if size > 0 {

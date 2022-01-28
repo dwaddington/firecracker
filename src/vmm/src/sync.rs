@@ -5,6 +5,7 @@
 use crate::memory_snapshot::SnapshotMemory;
 use crate::vmm_config::snapshot::SnapshotType;
 use snapshot::Snapshot;
+use core::slice::SlicePattern;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::TcpStream;
@@ -18,6 +19,7 @@ use crate::{mem_size_mib, MicrovmState, Vmm};
 use std::path::Path; //, MemoryBackingFile};
 
 use logger::{debug, info};
+use bytemuck::cast_slice;
 
 /// Synchronize snapshot state
 pub fn snapshot_state_to_sync(
@@ -51,6 +53,23 @@ pub fn snapshot_state_to_sync(
         .map_err(|e| SnapshotBackingFile("sync_all", e))
 }
 
+/// Perform XOR across two memories
+fn do_xor(p: &[u64], q: &Vec<u8>) {
+
+    let slice_q = bytemuck::cast_slice::<u8,u64>(q.as_slice());
+    // assert!(slice_q.len() == p.len());
+    debug!("p={} q={}", p.len(), slice_q.len());
+    
+    for i in 0..p.len() {
+       let _ = p[i] ^ slice_q[i];
+    }
+    debug!("xor complete!");
+}
+
+fn print_type_of<T>(_: T) {
+    debug!("{}", std::any::type_name::<T>())
+}
+
 /// Synchronize snapshot memory
 pub fn snapshot_memory_to_sync(
     vmm: &mut Vmm,
@@ -59,6 +78,25 @@ pub fn snapshot_memory_to_sync(
 ) -> std::result::Result<(), CreateSnapshotError> {
     use self::CreateSnapshotError::*;
 
+    if vmm.sync_state.dirty == true {
+        debug!("snapshot_memory_to_sync: dirty exists!");
+
+        let memory_regions = vmm.guest_memory().describe();
+        for region in memory_regions.regions {
+            debug!("memory region -> addr:{:#X} size:{}MiB", region.base_address, region.size / (1024*1024));
+            let ga = GuestAddress(region.base_address);
+
+            //            let new_version = unsafe { Vec::from_raw_parts(region.base_address as *mut u64, region.size / 8, region.size / 8) };
+            let new_version = unsafe { std::slice::from_raw_parts(region.base_address as *const u64, region.size / 8) };
+            
+            do_xor(new_version, &vmm.sync_state.buffer);
+        }
+        
+    }
+    else {
+        debug!("snapshot_memory_to_sync: skipping, no existing copy");
+    }
+    
     vmm.update_sync_state();
     
 //     let mut stream = TcpStream::connect(url).expect("unable to connect to remote server");
@@ -78,7 +116,7 @@ pub fn snapshot_memory_to_sync(
 
 //     assert!(snapshot_type == &SnapshotType::Sync);
 
-//     let memory_regions = vmm.guest_memory().describe();
+//     
 
 //     // seccomp needs to be set to allow us to allocate new memory
 //     let buffer_memory = Vec::with_capacity((mem_size_mib * 1024 * 1024) as usize);
