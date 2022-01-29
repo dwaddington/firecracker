@@ -659,7 +659,6 @@ impl RuntimeApiController {
                     elapsed_time_us
                 );
             }
-            
         }
         Ok(VmmData::Empty)
     }

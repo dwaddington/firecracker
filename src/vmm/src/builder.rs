@@ -39,6 +39,7 @@ use crate::vstate::{
 use crate::{device_manager, Error, EventManager, Vmm, VmmEventsObserver};
 
 use crate::vmm_config::instance_info::InstanceInfo;
+use crate::SyncState;
 use arch::InitrdConfig;
 #[cfg(target_arch = "x86_64")]
 use cpuid::common::is_same_model;
@@ -57,7 +58,6 @@ use utils::time::TimestampUs;
 use vm_memory::{Bytes, GuestAddress, GuestMemoryMmap};
 #[cfg(target_arch = "aarch64")]
 use vm_superio::Rtc;
-use crate::SyncState;
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]

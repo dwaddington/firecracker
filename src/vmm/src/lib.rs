@@ -12,7 +12,7 @@
 #![feature(slice_ptr_len)]
 #![feature(slice_pattern)]
 #![feature(vec_into_raw_parts)]
-    
+
 /// Handles setup and initialization a `Vmm` object.
 pub mod builder;
 pub(crate) mod device_manager;
@@ -27,6 +27,8 @@ pub mod rpc_interface;
 pub mod seccomp_filters;
 /// Signal handling utilities.
 pub mod signal_handler;
+/// Synchronization support
+pub mod sync;
 /// Utility functions for integration and benchmark testing
 pub mod utilities;
 /// microVM state versions.
@@ -34,8 +36,6 @@ pub mod version_map;
 /// Wrappers over structures used to configure the VMM.
 pub mod vmm_config;
 mod vstate;
-/// Synchronization support
-pub mod sync;
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -68,10 +68,10 @@ use logger::{debug, error, info, warn, LoggerError, MetricsError, METRICS};
 use rate_limiter::BucketUpdate;
 use seccompiler::BpfProgram;
 use snapshot::Persist;
+use std::io::Cursor;
 use utils::epoll::EventSet;
 use utils::eventfd::EventFd;
 use vm_memory::{GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
-use std::io::Cursor;
 
 /// Shorthand type for the EventManager flavour used by Firecracker.
 pub type EventManager = BaseEventManager<Arc<Mutex<dyn MutEventSubscriber>>>;
@@ -241,22 +241,33 @@ pub(crate) fn mem_size_mib(guest_memory: &GuestMemoryMmap) -> u64 {
 
 /// Remote synchronization state
 pub struct SyncState {
-    dirty : bool,
-    buffer : Vec<u8>,
+    dirty: bool,
+    buffer: Vec<u8>,
 }
 
-static INITIAL_SNAPSHOT_BUFFER_SIZE : usize = 4 * 1024 * 1024 * 1024;
+static INITIAL_SNAPSHOT_BUFFER_SIZE: usize = 8 * usize::pow(1024, 3); // 8GiB
 
 impl SyncState {
     /// Instantiate new sync state
     pub fn new() -> SyncState {
         SyncState {
-            dirty : false,
-            buffer : vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE]
+            dirty: false,
+            buffer: vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE],
         }
-    }        
+    }
 }
-        
+
+impl std::io::Write for SyncState {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        debug!("SyncState: got slice to write len={}", buf.len());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Contains the state and associated methods required for the Firecracker VMM.
 pub struct Vmm {
     events_observer: Option<Box<dyn VmmEventsObserver>>,
@@ -280,23 +291,30 @@ pub struct Vmm {
 impl Vmm {
     /// Update sync state
     pub fn update_sync_state(&mut self) {
-        let mut total_size : usize = 0;
+        let mut total_size: usize = 0;
 
         for r in self.guest_memory.describe().regions {
             total_size += r.size;
         }
-        
+
         if total_size > self.sync_state.buffer.len() {
-            self.sync_state.buffer.resize(total_size - self.sync_state.buffer.len(), 0);
-            debug!("update_sync_state: expanded memory to {}", &self.sync_state.buffer.len());
+            self.sync_state
+                .buffer
+                .resize(total_size - self.sync_state.buffer.len(), 0);
+            debug!(
+                "update_sync_state: expanded memory to {}",
+                &self.sync_state.buffer.len()
+            );
         }
-        
+
         let mut buffer = Cursor::new(&mut self.sync_state.buffer);
-        self.guest_memory.dump(&mut buffer).expect("update sync dump failed");
+        self.guest_memory
+            .dump(&mut buffer)
+            .expect("update sync dump failed");
         self.sync_state.dirty = true;
         debug!("dump to sync-state complete!");
     }
-    
+
     /// Gets Vmm version.
     pub fn version(&self) -> String {
         self.instance_info.vmm_version.clone()
