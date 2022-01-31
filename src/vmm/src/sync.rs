@@ -109,17 +109,17 @@ fn full_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), CreateSnapshot
         debug!("snapshot_memory_to_sync: skipping, no existing copy");
     }
 
-    vmm.update_sync_state();
+    vmm.copy_all_guest_memory();
     Ok(())
 }
 
 struct RegionProcessor<'a> {
-    prior_full_snapshot: &'a Vec<u8>,
+    prior_full_snapshot: &'a mut Vec<u8>,
     offset: usize,
 }
 
 impl<'a> RegionProcessor<'a> {
-    fn new(full_memory_snapshot: &'a Vec<u8>) -> RegionProcessor<'a> {
+    fn new(full_memory_snapshot: &'a mut Vec<u8>) -> RegionProcessor<'a> {
         RegionProcessor {
             prior_full_snapshot: full_memory_snapshot,
             offset: 0,
@@ -128,17 +128,19 @@ impl<'a> RegionProcessor<'a> {
 }
 
 impl<'w> std::io::Write for RegionProcessor<'w> {
+    /// Write applied to dirty pages (in batch)
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        debug!("got slice to write len={}", buf.len());
-        debug!("x.len={}", self.prior_full_snapshot.len());
-        let before_slice = bytemuck::cast_slice::<u8, u64>(self.prior_full_snapshot.as_slice());
+        let offset64 = self.offset / 8;
+        let mut full_prior = bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
         let new_slice = bytemuck::cast_slice::<u8, u64>(buf);
-        debug!(
-            "slice before: {} after:{} offset:{}",
-            before_slice.len(),
-            new_slice.len(),
-            self.offset / 8
-        );
+        let prior_slice = &mut full_prior[offset64..offset64 + new_slice.len()];
+
+        for i in 0..new_slice.len() {
+            // pretend to xor
+            let _ = new_slice[i] ^ prior_slice[i];
+            // do copy
+            prior_slice[i] = new_slice[i];
+        }
         Ok(buf.len())
     }
 
@@ -149,69 +151,76 @@ impl<'w> std::io::Write for RegionProcessor<'w> {
 
 /// Perform a dirty-page based snapshot
 fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_snapshot::Error> {
-    let dirty_bitmap = vmm.get_dirty_bitmap().expect("get dirty bitmap failed");
 
-    let page_size = get_page_size().map_err(memory_snapshot::Error::PageSize)?;
-    let mut writer = RegionProcessor::new(&vmm.sync_state.buffer);
+    // we need a full base copy to start with
+    if vmm.sync_state.is_copied() == false {
+        let time_start = Instant::now();
+        vmm.copy_all_guest_memory();
+        debug!(
+            "Completed full copy: time={}ms",
+            time_start.elapsed().as_millis()
+        );
+        return Ok(());
+    }
 
-    // we need to make sure we have a full prior copy of memory
-    if vmm.sync_state.dirty {
-        vmm.guest_memory
-            .iter()
-            .enumerate()
-            .try_for_each(|(slot, region)| {
-                debug!("XXX: slot={} region.size={:?}", slot, region.size());
-                let kvm_bitmap = dirty_bitmap.get(&slot).unwrap();
-                let mut dirty_batch_start: u64 = 0;
-                let mut write_size = 0;
+    
+    {
+        let dirty_bitmap = vmm.get_dirty_bitmap().expect("get dirty bitmap failed");
 
-                for (i, v) in kvm_bitmap.iter().enumerate() {
-                    for j in 0..64 {
-                        let is_kvm_page_dirty = ((v >> j) & 1u64) != 0u64;
-                        let page_offset = ((i * 64) + j) * page_size;
-                        let is_firecracker_page_dirty = region.bitmap().dirty_at(page_offset);
-                        if is_kvm_page_dirty || is_firecracker_page_dirty {
-                            // We are at the start of a new batch of dirty pages.
-                            if write_size == 0 {
-                                dirty_batch_start = page_offset as u64;
-                                //debug!("XXX: dirty page {}", dirty_batch_start);
+        let page_size = get_page_size().map_err(memory_snapshot::Error::PageSize)?;
+        let mut writer = RegionProcessor::new(& mut vmm.sync_state.buffer);
+
+        let time_start = Instant::now();
+
+        // we need to make sure we have a full prior copy of memory
+        if vmm.sync_state.dirty {
+            vmm.guest_memory
+                .iter()
+                .enumerate()
+                .try_for_each(|(slot, region)| {
+                    debug!("XXX: slot={} region.size={:?}", slot, region.size());
+                    let kvm_bitmap = dirty_bitmap.get(&slot).unwrap();
+                    let mut dirty_batch_start: u64 = 0;
+                    let mut write_size = 0;
+
+                    for (i, v) in kvm_bitmap.iter().enumerate() {
+                        for j in 0..64 {
+                            let is_kvm_page_dirty = ((v >> j) & 1u64) != 0u64;
+                            let page_offset = ((i * 64) + j) * page_size;
+                            let is_firecracker_page_dirty = region.bitmap().dirty_at(page_offset);
+                            if is_kvm_page_dirty || is_firecracker_page_dirty {
+                                // We are at the start of a new batch of dirty pages.
+                                if write_size == 0 {
+                                    dirty_batch_start = page_offset as u64;
+                                    //debug!("XXX: dirty page {}", dirty_batch_start);
+                                }
+                                write_size += page_size;
+                            } else if write_size > 0 {
+                                writer.offset = dirty_batch_start as usize;
+                                // We are at the end of a batch of dirty pages.
+                                region
+                                    .write_all_to(
+                                        MemoryRegionAddress(dirty_batch_start),
+                                        &mut writer,
+                                        write_size,
+                                    )
+                                    .expect("write_all_to region failed");
+
+                                write_size = 0;
                             }
-                            write_size += page_size;
-                        } else if write_size > 0 {
-                            writer.offset = dirty_batch_start as usize;
-                            // We are at the end of a batch of dirty pages.
-                            region
-                                .write_all_to(
-                                    MemoryRegionAddress(dirty_batch_start),
-                                    &mut writer,
-                                    write_size,
-                                )
-                                .expect("write_all_to region failed");
-                            // )?;
-
-                            //let offset_in_region = MemoryRegionAddress(dirty_batch_start).0;
-                            //debug!(
-                            //    "XXX: end of batch write_size={} offset={}",
-                            //    write_size, offset_in_region
-                            //);
-
-                            // let new_version = unsafe {
-                            //     std::slice::from_raw_parts(
-                            //         region.offset as *const u64,
-                            //         region.size / 8,
-                            //     )
-                            // };
-
-                            //do_xor(new_version, region.offset as usize, &vmm.sync_state.buffer);
-                            write_size = 0;
                         }
                     }
-                }
 
-                Ok(())
-            })?;
+                    Ok(())
+                })?;
+        }
+
+        debug!(
+            "Completed memory XORs and update-copy on dirty pages: time={}ms",
+            time_start.elapsed().as_millis()
+        );
     }
-    vmm.update_sync_state();
+
 
     Ok(())
 }

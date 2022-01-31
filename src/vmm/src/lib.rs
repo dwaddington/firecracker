@@ -255,16 +255,10 @@ impl SyncState {
             buffer: vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE],
         }
     }
-}
 
-impl std::io::Write for SyncState {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        debug!("SyncState: got slice to write len={}", buf.len());
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+    /// Return true if dirty
+    pub fn is_copied(&self) -> bool {
+        return self.dirty;
     }
 }
 
@@ -290,7 +284,7 @@ pub struct Vmm {
 
 impl Vmm {
     /// Update sync state
-    pub fn update_sync_state(&mut self) {
+    pub fn copy_all_guest_memory(&mut self) {
         let mut total_size: usize = 0;
 
         for r in self.guest_memory.describe().regions {
@@ -312,7 +306,6 @@ impl Vmm {
             .dump(&mut buffer)
             .expect("update sync dump failed");
         self.sync_state.dirty = true;
-        debug!("dump to sync-state complete!");
     }
 
     /// Gets Vmm version.
