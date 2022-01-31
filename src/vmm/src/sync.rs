@@ -131,7 +131,7 @@ impl<'w> std::io::Write for RegionProcessor<'w> {
     /// Write applied to dirty pages (in batch)
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let offset64 = self.offset / 8;
-        let mut full_prior = bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
+        let full_prior = bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
         let new_slice = bytemuck::cast_slice::<u8, u64>(buf);
         let prior_slice = &mut full_prior[offset64..offset64 + new_slice.len()];
 
@@ -171,6 +171,7 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         let mut writer = RegionProcessor::new(& mut vmm.sync_state.buffer);
 
         let time_start = Instant::now();
+        let mut page_count : usize = 0;
 
         // we need to make sure we have a full prior copy of memory
         if vmm.sync_state.dirty {
@@ -206,6 +207,8 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
                                     )
                                     .expect("write_all_to region failed");
 
+                                page_count += write_size / page_size;
+
                                 write_size = 0;
                             }
                         }
@@ -216,8 +219,9 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         }
 
         debug!(
-            "Completed memory XORs and update-copy on dirty pages: time={}ms",
-            time_start.elapsed().as_millis()
+            "Completed memory XORs and update-copy on dirty pages: time={}ms page-count={}",
+            time_start.elapsed().as_millis(),
+            page_count
         );
     }
 
