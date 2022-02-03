@@ -42,6 +42,17 @@ pub struct CreateSnapshotParams {
     pub version: Option<String>,
 }
 
+/// Stores the configuration that will be used for creating a snapshot.
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncSnapshotParams {
+    /// Network server URL
+    pub server_url: String,
+    /// Optional field for the microVM version. The default
+    /// value is the current version.
+    pub version: Option<String>,
+}
+
 /// Stores the configuration that will be used for loading a snapshot.
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

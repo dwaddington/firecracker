@@ -28,7 +28,7 @@ use crate::vmm_config::mmds::{MmdsConfig, MmdsConfigError};
 use crate::vmm_config::net::{
     NetworkInterfaceConfig, NetworkInterfaceError, NetworkInterfaceUpdateConfig,
 };
-use crate::vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams, SnapshotType};
+use crate::vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams, SnapshotType, SyncSnapshotParams};
 use crate::vmm_config::vsock::{VsockConfigError, VsockDeviceConfig};
 use crate::vmm_config::{self, RateLimiterUpdate};
 use crate::{builder::StartMicrovmError, EventManager};
@@ -57,6 +57,10 @@ pub enum VmmAction {
     /// Create a snapshot using as input the `CreateSnapshotParams`. This action can only be called
     /// after the microVM has booted and only when the microVM is in `Paused` state.
     CreateSnapshot(CreateSnapshotParams),
+    /// Start continuous synchronization
+    StartSnapshotSync(SyncSnapshotParams),
+    /// Stop continuous synchronization
+    StopSnapshotSync,
     /// Get the balloon device configuration.
     GetBalloonConfig,
     /// Get the ballon device latest statistics.
@@ -334,6 +338,8 @@ impl<'a> PrebootApiController<'a> {
             StartMicroVm => self.start_microvm(),
             // Operations not allowed pre-boot.
             CreateSnapshot(_)
+            | StartSnapshotSync(_)
+            | StopSnapshotSync
             | FlushMetrics
             | Pause
             | Resume
@@ -488,6 +494,8 @@ impl RuntimeApiController {
         match request {
             // Supported operations allowed post-boot.
             CreateSnapshot(snapshot_create_cfg) => self.create_snapshot(&snapshot_create_cfg),
+            StartSnapshotSync(sync_cfg) => self.start_sync(&sync_cfg),
+            StopSnapshotSync => { info!("** StopSnapshotSync: not implemented"); Ok(VmmData::Empty) },
             FlushMetrics => self.flush_metrics(),
             GetBalloonConfig => self
                 .vmm
@@ -660,6 +668,12 @@ impl RuntimeApiController {
                 );
             }
         }
+        Ok(VmmData::Empty)
+    }
+
+    fn start_sync(&mut self, create_params: &SyncSnapshotParams) -> ActionResult {
+        let mut vmm = self.vmm.lock().expect("Poisoned lock");
+        info!("START SYNC START SYNC START SYNC START SYNC");
         Ok(VmmData::Empty)
     }
 

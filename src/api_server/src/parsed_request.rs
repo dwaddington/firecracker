@@ -901,6 +901,23 @@ pub(crate) mod tests {
         let req = connection.pop_parsed_request().unwrap();
         assert!(ParsedRequest::try_from_request(&req).is_ok());
     }
+    
+    #[test]
+    fn test_try_from_put_start_snapshot_sync() {
+        let (mut sender, receiver) = UnixStream::pair().unwrap();
+        let mut connection = HttpConnection::new(receiver);
+        let body = "{ \
+            \"snapshot_path\": \"foo\", \
+            \"mem_file_path\": \"bar\", \
+            \"version\": \"0.23.0\" \
+        }";
+        sender
+            .write_all(http_request("PUT", "/snapshot/startsync", Some(&body)).as_bytes())
+            .unwrap();
+        assert!(connection.try_read().is_ok());
+        let req = connection.pop_parsed_request().unwrap();
+        assert!(ParsedRequest::try_from_request(&req).is_ok());
+    }
 
     #[test]
     fn test_try_from_put_shutdown() {

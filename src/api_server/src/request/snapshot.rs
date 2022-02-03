@@ -5,7 +5,7 @@ use super::super::VmmAction;
 use crate::parsed_request::{Error, ParsedRequest};
 use crate::request::Body;
 use crate::request::{Method, StatusCode};
-use vmm::vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams};
+use vmm::vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams, SyncSnapshotParams};
 use vmm::vmm_config::snapshot::{Vm, VmState};
 
 pub(crate) fn parse_put_snapshot(
@@ -16,6 +16,10 @@ pub(crate) fn parse_put_snapshot(
         Some(&request_type) => match request_type {
             "create" => Ok(ParsedRequest::new_sync(VmmAction::CreateSnapshot(
                 serde_json::from_slice::<CreateSnapshotParams>(body.raw())
+                    .map_err(Error::SerdeJson)?,
+            ))),
+            "startsync" => Ok(ParsedRequest::new_sync(VmmAction::StartSnapshotSync(
+                serde_json::from_slice::<SyncSnapshotParams>(body.raw())
                     .map_err(Error::SerdeJson)?,
             ))),
             "load" => Ok(ParsedRequest::new_sync(VmmAction::LoadSnapshot(
