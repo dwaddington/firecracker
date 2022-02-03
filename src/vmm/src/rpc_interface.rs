@@ -672,8 +672,10 @@ impl RuntimeApiController {
     }
 
     fn start_sync(&mut self, create_params: &SyncSnapshotParams) -> ActionResult {
-        let mut vmm = self.vmm.lock().expect("Poisoned lock");
+        //let mut vmm = self.vmm.lock().expect("Poisoned lock");
+        self.pause();
         info!("START SYNC START SYNC START SYNC START SYNC");
+        self.resume();
         Ok(VmmData::Empty)
     }
 
