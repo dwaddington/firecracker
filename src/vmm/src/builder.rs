@@ -299,7 +299,7 @@ fn create_vmm_and_vcpus(
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
         pio_device_manager,
-        sync_state: SyncState::new(),
+        sync_state: SyncState::new()
     };
 
     Ok((vmm, vcpus))

@@ -40,6 +40,8 @@ mod vstate;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::thread::{spawn, JoinHandle};
+use std::{thread, time};
 use std::os::unix::io::AsRawFd;
 use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Barrier, Mutex};
@@ -243,9 +245,20 @@ pub(crate) fn mem_size_mib(guest_memory: &GuestMemoryMmap) -> u64 {
 pub struct SyncState {
     dirty: bool,
     buffer: Vec<u8>,
+    thread: Option<JoinHandle<()>>,
+    exit_thread: bool
 }
 
 static INITIAL_SNAPSHOT_BUFFER_SIZE: usize = 8 * usize::pow(1024, 3); // 8GiB
+
+
+fn thread_entry() {
+    loop {
+        info!("worker thread!!");
+        thread::sleep(time::Duration::from_secs(1));
+    }
+}
+
 
 impl SyncState {
     /// Instantiate new sync state
@@ -253,12 +266,25 @@ impl SyncState {
         SyncState {
             dirty: false,
             buffer: vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE],
+            thread: Some(thread::spawn(||{ thread_entry(); })),
         }
     }
+
 
     /// Return true if dirty
     pub fn is_copied(&self) -> bool {
         return self.dirty;
+    }
+
+    /// Shutdown worker thread
+    pub fn shutdown_worker(&mut self) {
+        debug!("shutting down worker");
+        self.exit_thread = true;
+        self.thread
+            .take()
+            .expect("call on non running")
+            .join()
+            .expect("join failed");
     }
 }
 
@@ -809,6 +835,9 @@ fn construct_kvm_mpidrs(vcpu_states: &[VcpuState]) -> Vec<u64> {
 
 impl Drop for Vmm {
     fn drop(&mut self) {
+
+        self.sync_state.shutdown_worker();
+        
         if let Some(observer) = self.events_observer.as_mut() {
             if let Err(e) = observer.on_vmm_stop() {
                 warn!("{}", Error::VmmObserverTeardown(e));
