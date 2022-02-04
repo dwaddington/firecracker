@@ -40,12 +40,15 @@ mod vstate;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
-use std::thread::{spawn, JoinHandle};
-use std::{thread, time};
 use std::os::unix::io::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Barrier, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
+use std::{thread, time};
 
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
@@ -246,30 +249,53 @@ pub struct SyncState {
     dirty: bool,
     buffer: Vec<u8>,
     thread: Option<JoinHandle<()>>,
-    exit_thread: bool
+    exit_thread: Arc<AtomicBool>,
+    tx_channel: Sender<Arc<SyncWork>>,
+}
+
+/// Task unit for worker thread
+pub struct SyncWork {
+    buffer: Vec<u8>,
 }
 
 static INITIAL_SNAPSHOT_BUFFER_SIZE: usize = 8 * usize::pow(1024, 3); // 8GiB
 
-
-fn thread_entry() {
-    loop {
+fn thread_entry(exit_bool: Arc<AtomicBool>, rx: Receiver<Arc<SyncWork>>) {
+    while exit_bool.load(Ordering::SeqCst) == false {
         info!("worker thread!!");
         thread::sleep(time::Duration::from_secs(1));
+        info!("receiving on channel");
+
+        match rx.recv() {
+            Ok(data) => {
+                info!("recevied work!!!! {}", data.buffer.len());
+            }
+            Err(err) => debug!("rx not OK {}", err),
+        };
     }
 }
-
 
 impl SyncState {
     /// Instantiate new sync state
     pub fn new() -> SyncState {
+        let (tx, rx): (Sender<Arc<SyncWork>>, Receiver<Arc<SyncWork>>) = mpsc::channel();
+        let base = Arc::new(AtomicBool::new(false));
+        let thread_ref = base.clone();
         SyncState {
             dirty: false,
             buffer: vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE],
-            thread: Some(thread::spawn(||{ thread_entry(); })),
+            thread: Some(thread::spawn(move || {
+                thread_entry(thread_ref, rx);
+            })),
+            exit_thread: base.clone(),
+            tx_channel: tx.clone(),
         }
     }
 
+    /// Send work to the worker thread
+    pub fn send_work(&self, work: SyncWork) {
+        self.tx_channel.send(Arc::new(work)).expect("channel send");
+    }
 
     /// Return true if dirty
     pub fn is_copied(&self) -> bool {
@@ -279,12 +305,16 @@ impl SyncState {
     /// Shutdown worker thread
     pub fn shutdown_worker(&mut self) {
         debug!("shutting down worker");
-        self.exit_thread = true;
+        // signal exit
+        self.exit_thread.store(true, Ordering::SeqCst);
+        // unblock rx on channel
+        self.send_work(crate::SyncWork { buffer: vec![0] });
         self.thread
             .take()
             .expect("call on non running")
             .join()
             .expect("join failed");
+        debug!("worker shut down OK!!!!")
     }
 }
 
@@ -835,9 +865,8 @@ fn construct_kvm_mpidrs(vcpu_states: &[VcpuState]) -> Vec<u64> {
 
 impl Drop for Vmm {
     fn drop(&mut self) {
-
         self.sync_state.shutdown_worker();
-        
+
         if let Some(observer) = self.events_observer.as_mut() {
             if let Err(e) = observer.on_vmm_stop() {
                 warn!("{}", Error::VmmObserverTeardown(e));

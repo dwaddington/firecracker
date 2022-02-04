@@ -4,14 +4,15 @@
 //! Support for snapshot synchronization
 use crate::memory_snapshot;
 use crate::memory_snapshot::SnapshotMemory;
-use crate::vmm_config::snapshot::SnapshotType;
+
 use crate::vmm_config::snapshot::SyncSnapshotParams;
 use snapshot::Snapshot;
 use std::fs::OpenOptions;
-use std::io::Cursor;
+
+use std::io::Result;
 use std::io::Write;
-use std::io::{IoSlice, Result};
-use std::net::TcpStream;
+
+use std::sync::Arc;
 use std::time::Instant;
 use vm_memory::{Bitmap, Bytes, GuestMemory, GuestMemoryRegion, MemoryRegionAddress};
 
@@ -236,6 +237,9 @@ pub fn sync_snapshot_memory(
 ) -> std::result::Result<(), CreateSnapshotError> {
     //    full_memory_snapshot(vmm);
     dirtypage_memory_snapshot(vmm).expect("dirtypage memory snapshot failed");
+    vmm.sync_state.send_work(crate::SyncWork {
+        buffer: vec![1, 2, 3],
+    });
 
     //     let mut stream = TcpStream::connect(url).expect("unable to connect to remote server");
     //     // let mut file = OpenOptions::new()
