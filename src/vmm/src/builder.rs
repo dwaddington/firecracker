@@ -3,6 +3,7 @@
 
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
+use crate::sync_backend::SyncState;
 use devices::legacy::serial::ReadableFd;
 use devices::legacy::EventFdTrigger;
 use devices::legacy::SerialDevice;
@@ -39,7 +40,6 @@ use crate::vstate::{
 use crate::{device_manager, Error, EventManager, Vmm, VmmEventsObserver};
 
 use crate::vmm_config::instance_info::InstanceInfo;
-use crate::SyncState;
 use arch::InitrdConfig;
 #[cfg(target_arch = "x86_64")]
 use cpuid::common::is_same_model;
@@ -299,7 +299,7 @@ fn create_vmm_and_vcpus(
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
         pio_device_manager,
-        sync_state: SyncState::new(),
+        sync_engine: SyncState::new(),
     };
 
     Ok((vmm, vcpus))

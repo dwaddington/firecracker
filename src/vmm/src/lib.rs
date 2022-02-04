@@ -29,26 +29,24 @@ pub mod seccomp_filters;
 pub mod signal_handler;
 /// Synchronization support
 pub mod sync;
+/// Synchronization backend support
+pub mod sync_backend;
 /// Utility functions for integration and benchmark testing
 pub mod utilities;
 /// microVM state versions.
 pub mod version_map;
 /// Wrappers over structures used to configure the VMM.
 pub mod vmm_config;
+
 mod vstate;
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::unix::io::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Barrier, Mutex};
-use std::thread::JoinHandle;
 use std::time::Duration;
-use std::{thread, time};
 
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
@@ -244,80 +242,6 @@ pub(crate) fn mem_size_mib(guest_memory: &GuestMemoryMmap) -> u64 {
     guest_memory.iter().map(|region| region.len()).sum::<u64>() >> 20
 }
 
-/// Remote synchronization state
-pub struct SyncState {
-    dirty: bool,
-    buffer: Vec<u8>,
-    thread: Option<JoinHandle<()>>,
-    exit_thread: Arc<AtomicBool>,
-    tx_channel: Sender<Arc<SyncWork>>,
-}
-
-/// Task unit for worker thread
-pub struct SyncWork {
-    buffer: Vec<u8>,
-}
-
-static INITIAL_SNAPSHOT_BUFFER_SIZE: usize = 8 * usize::pow(1024, 3); // 8GiB
-
-fn thread_entry(exit_bool: Arc<AtomicBool>, rx: Receiver<Arc<SyncWork>>) {
-    while exit_bool.load(Ordering::SeqCst) == false {
-        info!("worker thread!!");
-        thread::sleep(time::Duration::from_secs(1));
-        info!("receiving on channel");
-
-        match rx.recv() {
-            Ok(data) => {
-                info!("recevied work!!!! {}", data.buffer.len());
-            }
-            Err(err) => debug!("rx not OK {}", err),
-        };
-    }
-}
-
-impl SyncState {
-    /// Instantiate new sync state
-    pub fn new() -> SyncState {
-        let (tx, rx): (Sender<Arc<SyncWork>>, Receiver<Arc<SyncWork>>) = mpsc::channel();
-        let base = Arc::new(AtomicBool::new(false));
-        let thread_ref = base.clone();
-        SyncState {
-            dirty: false,
-            buffer: vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE],
-            thread: Some(thread::spawn(move || {
-                thread_entry(thread_ref, rx);
-            })),
-            exit_thread: base.clone(),
-            tx_channel: tx.clone(),
-        }
-    }
-
-    /// Send work to the worker thread
-    pub fn send_work(&self, work: SyncWork) {
-        self.tx_channel.send(Arc::new(work)).expect("channel send");
-    }
-
-    /// Return true if dirty
-    pub fn is_copied(&self) -> bool {
-        return self.dirty;
-    }
-
-    /// Shutdown worker thread
-    pub fn shutdown_worker(&mut self) {
-        debug!("shutting down worker");
-        // signal exit
-        self.exit_thread.store(true, Ordering::SeqCst);
-        // unblock rx on channel
-        self.send_work(crate::SyncWork { buffer: vec![0] });
-        self.thread
-            .take()
-            .expect("call on non running")
-            .join()
-            .expect("join failed");
-        debug!("worker shut down OK!!!!")
-    }
-}
-
 /// Contains the state and associated methods required for the Firecracker VMM.
 pub struct Vmm {
     events_observer: Option<Box<dyn VmmEventsObserver>>,
@@ -335,7 +259,8 @@ pub struct Vmm {
     mmio_device_manager: MMIODeviceManager,
     #[cfg(target_arch = "x86_64")]
     pio_device_manager: PortIODeviceManager,
-    sync_state: SyncState,
+    // Synchronization logic
+    sync_engine: crate::sync_backend::SyncState,
 }
 
 impl Vmm {
@@ -347,21 +272,21 @@ impl Vmm {
             total_size += r.size;
         }
 
-        if total_size > self.sync_state.buffer.len() {
-            self.sync_state
+        if total_size > self.sync_engine.buffer.len() {
+            self.sync_engine
                 .buffer
-                .resize(total_size - self.sync_state.buffer.len(), 0);
+                .resize(total_size - self.sync_engine.buffer.len(), 0);
             debug!(
-                "update_sync_state: expanded memory to {}",
-                &self.sync_state.buffer.len()
+                "update_sync_engine: expanded memory to {}",
+                &self.sync_engine.buffer.len()
             );
         }
 
-        let mut buffer = Cursor::new(&mut self.sync_state.buffer);
+        let mut buffer = Cursor::new(&mut self.sync_engine.buffer);
         self.guest_memory
             .dump(&mut buffer)
             .expect("update sync dump failed");
-        self.sync_state.dirty = true;
+        self.sync_engine.set_dirty();
     }
 
     /// Gets Vmm version.
@@ -865,7 +790,7 @@ fn construct_kvm_mpidrs(vcpu_states: &[VcpuState]) -> Vec<u64> {
 
 impl Drop for Vmm {
     fn drop(&mut self) {
-        self.sync_state.shutdown_worker();
+        self.sync_engine.shutdown_worker();
 
         if let Some(observer) = self.events_observer.as_mut() {
             if let Err(e) = observer.on_vmm_stop() {

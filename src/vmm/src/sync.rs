@@ -1,27 +1,24 @@
 // Copyright 2022 IBM Corporation. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Support for snapshot synchronization
-use crate::memory_snapshot;
-use crate::memory_snapshot::SnapshotMemory;
-
-use crate::vmm_config::snapshot::SyncSnapshotParams;
-use snapshot::Snapshot;
+//! Front-end synchronization
 use std::fs::OpenOptions;
-
 use std::io::Result;
 use std::io::Write;
-
-use std::sync::Arc;
 use std::time::Instant;
+
+/// Support for snapshot synchronization
+use crate::memory_snapshot;
+use crate::memory_snapshot::SnapshotMemory;
+use crate::persist::CreateSnapshotError;
+use crate::sync_backend::SyncWork;
+use crate::vmm_config::snapshot::SyncSnapshotParams;
+use crate::{MicrovmState, Vmm};
+
+use snapshot::Snapshot;
+use versionize::VersionMap;
 use vm_memory::{Bitmap, Bytes, GuestMemory, GuestMemoryRegion, MemoryRegionAddress};
 
-use versionize::VersionMap;
-//use vm_memory::{GuestAddress, MemoryRegionAddress};
-
-use crate::persist::CreateSnapshotError;
-//use crate::DirtyBitmap;
-use crate::{mem_size_mib, MicrovmState, Vmm};
 use std::path::Path; //, MemoryBackingFile};
 use utils::get_page_size;
 
@@ -90,7 +87,7 @@ fn print_type_of<T>(_: T) {
 #[allow(dead_code)]
 /// Perform a full memory snapshot
 fn full_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), CreateSnapshotError> {
-    if vmm.sync_state.dirty {
+    if vmm.sync_engine.is_copied() {
         debug!("snapshot_memory_to_sync: dirty exists!");
 
         let memory_regions = vmm.guest_memory().describe();
@@ -105,7 +102,7 @@ fn full_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), CreateSnapshot
             let new_version =
                 unsafe { std::slice::from_raw_parts(region.offset as *const u64, region.size / 8) };
 
-            do_xor(new_version, region.offset as usize, &vmm.sync_state.buffer);
+            do_xor(new_version, region.offset as usize, &vmm.sync_engine.buffer);
         }
     } else {
         debug!("snapshot_memory_to_sync: skipping, no existing copy");
@@ -156,7 +153,7 @@ impl<'w> std::io::Write for RegionProcessor<'w> {
 /// Perform a dirty-page based snapshot
 fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_snapshot::Error> {
     // we need a full base copy to start with
-    if vmm.sync_state.is_copied() == false {
+    if vmm.sync_engine.is_copied() == false {
         let time_start = Instant::now();
         vmm.copy_all_guest_memory();
         debug!(
@@ -170,13 +167,13 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         let dirty_bitmap = vmm.get_dirty_bitmap().expect("get dirty bitmap failed");
 
         let page_size = get_page_size().map_err(memory_snapshot::Error::PageSize)?;
-        let mut writer = RegionProcessor::new(&mut vmm.sync_state.buffer);
 
         let time_start = Instant::now();
         let mut page_count: usize = 0;
 
         // we need to make sure we have a full prior copy of memory
-        if vmm.sync_state.dirty {
+        if vmm.sync_engine.is_copied() == true {
+            let mut writer = RegionProcessor::new(&mut vmm.sync_engine.buffer);
             vmm.guest_memory
                 .iter()
                 .enumerate()
@@ -237,7 +234,7 @@ pub fn sync_snapshot_memory(
 ) -> std::result::Result<(), CreateSnapshotError> {
     //    full_memory_snapshot(vmm);
     dirtypage_memory_snapshot(vmm).expect("dirtypage memory snapshot failed");
-    vmm.sync_state.send_work(crate::SyncWork {
+    vmm.sync_engine.send_work(SyncWork {
         buffer: vec![1, 2, 3],
     });
 

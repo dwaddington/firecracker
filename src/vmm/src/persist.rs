@@ -28,6 +28,7 @@ use crate::{Error as VmmError, EventManager, Vmm};
 #[cfg(target_arch = "x86_64")]
 use cpuid::common::{get_vendor_id_from_cpuid, get_vendor_id_from_host};
 
+use crate::sync::sync_snapshot_memory;
 use crate::vmm_config::instance_info::InstanceInfo;
 #[cfg(target_arch = "aarch64")]
 use arch::regs::{get_manufacturer_id_from_host, get_manufacturer_id_from_state};
@@ -38,8 +39,6 @@ use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 use virtio_gen::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use vm_memory::GuestMemoryMmap;
-
-use crate::sync::{snapshot_state_to_sync, sync_snapshot_memory};
 
 #[cfg(target_arch = "x86_64")]
 const FC_V0_23_MAX_DEVICES: u32 = 11;
