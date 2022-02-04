@@ -5,6 +5,7 @@
 use crate::memory_snapshot;
 use crate::memory_snapshot::SnapshotMemory;
 use crate::vmm_config::snapshot::SnapshotType;
+use crate::vmm_config::snapshot::SyncSnapshotParams;
 use snapshot::Snapshot;
 use std::fs::OpenOptions;
 use std::io::Cursor;
@@ -131,14 +132,16 @@ impl<'w> std::io::Write for RegionProcessor<'w> {
     /// Write applied to dirty pages (in batch)
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let offset64 = self.offset / 8;
-        let full_prior = bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
+        let full_prior =
+            bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
         let new_slice = bytemuck::cast_slice::<u8, u64>(buf);
         let prior_slice = &mut full_prior[offset64..offset64 + new_slice.len()];
 
+        // 64-bit iterator
         for i in 0..new_slice.len() {
             // pretend to xor
             let _ = new_slice[i] ^ prior_slice[i];
-            // do copy
+            // do update
             prior_slice[i] = new_slice[i];
         }
         Ok(buf.len())
@@ -151,7 +154,6 @@ impl<'w> std::io::Write for RegionProcessor<'w> {
 
 /// Perform a dirty-page based snapshot
 fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_snapshot::Error> {
-
     // we need a full base copy to start with
     if vmm.sync_state.is_copied() == false {
         let time_start = Instant::now();
@@ -163,15 +165,14 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         return Ok(());
     }
 
-    
     {
         let dirty_bitmap = vmm.get_dirty_bitmap().expect("get dirty bitmap failed");
 
         let page_size = get_page_size().map_err(memory_snapshot::Error::PageSize)?;
-        let mut writer = RegionProcessor::new(& mut vmm.sync_state.buffer);
+        let mut writer = RegionProcessor::new(&mut vmm.sync_state.buffer);
 
         let time_start = Instant::now();
-        let mut page_count : usize = 0;
+        let mut page_count: usize = 0;
 
         // we need to make sure we have a full prior copy of memory
         if vmm.sync_state.dirty {
@@ -179,7 +180,7 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
                 .iter()
                 .enumerate()
                 .try_for_each(|(slot, region)| {
-                    debug!("XXX: slot={} region.size={:?}", slot, region.size());
+                    //                    debug!("XXX: slot={} region.size={:?}", slot, region.size());
                     let kvm_bitmap = dirty_bitmap.get(&slot).unwrap();
                     let mut dirty_batch_start: u64 = 0;
                     let mut write_size = 0;
@@ -225,15 +226,13 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         );
     }
 
-
     Ok(())
 }
 
 /// Synchronize snapshot memory
-pub fn snapshot_memory_to_sync(
+pub fn sync_snapshot_memory(
     vmm: &mut Vmm,
-    url: &str,
-    snapshot_type: &SnapshotType,
+    params: &SyncSnapshotParams,
 ) -> std::result::Result<(), CreateSnapshotError> {
     //    full_memory_snapshot(vmm);
     dirtypage_memory_snapshot(vmm).expect("dirtypage memory snapshot failed");

@@ -18,7 +18,7 @@ pub(crate) fn parse_put_snapshot(
                 serde_json::from_slice::<CreateSnapshotParams>(body.raw())
                     .map_err(Error::SerdeJson)?,
             ))),
-            "startsync" => Ok(ParsedRequest::new_sync(VmmAction::StartSnapshotSync(
+            "sync" => Ok(ParsedRequest::new_sync(VmmAction::SyncSnapshot(
                 serde_json::from_slice::<SyncSnapshotParams>(body.raw())
                     .map_err(Error::SerdeJson)?,
             ))),

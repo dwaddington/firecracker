@@ -13,7 +13,9 @@ use crate::builder::{self, StartMicrovmError};
 use crate::device_manager::persist::Error as DevicePersistError;
 use crate::mem_size_mib;
 use crate::vmm_config::machine_config::MAX_SUPPORTED_VCPUS;
-use crate::vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams, SnapshotType};
+use crate::vmm_config::snapshot::{
+    CreateSnapshotParams, LoadSnapshotParams, SnapshotType, SyncSnapshotParams,
+};
 use crate::vstate::{self, vcpu::VcpuState, vm::VmState};
 
 use crate::device_manager::persist::DeviceStates;
@@ -37,7 +39,7 @@ use versionize_derive::Versionize;
 use virtio_gen::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use vm_memory::GuestMemoryMmap;
 
-use crate::sync::{snapshot_memory_to_sync, snapshot_state_to_sync};
+use crate::sync::{snapshot_state_to_sync, sync_snapshot_memory};
 
 #[cfg(target_arch = "x86_64")]
 const FC_V0_23_MAX_DEVICES: u32 = 11;
@@ -105,6 +107,25 @@ impl Display for MicrovmStateError {
             SaveVmState(err) => write!(f, "Cannot save Vm state. Error: {:?}", err),
             SignalVcpu(err) => write!(f, "Cannot signal Vcpu: {:?}", err),
             UnexpectedVcpuResponse => write!(f, "Vcpu is in unexpected state."),
+        }
+    }
+}
+
+/// Errors associated with synchronizing a snapshot.
+#[derive(Debug)]
+pub enum SyncSnapshotError {
+    /// Unknown error; temporary
+    Unknown,
+    /// Connection to server failed
+    ConnectionFailed(u32),
+}
+
+impl Display for SyncSnapshotError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        use self::SyncSnapshotError::*;
+        match self {
+            Unknown => write!(f, "Unknown synchronization error"),
+            ConnectionFailed(code) => write!(f, "Connection failed error: {}", code),
         }
     }
 }
@@ -237,25 +258,33 @@ pub fn create_snapshot(
         .save_state()
         .map_err(CreateSnapshotError::MicrovmState)?;
 
-    if params.snapshot_type == SnapshotType::Sync {
-        snapshot_state_to_sync(
-            &microvm_state,
-            &params.snapshot_path,
-            snapshot_data_version,
-            version_map,
-        )?;
+    snapshot_state_to_file(
+        &microvm_state,
+        &params.snapshot_path,
+        snapshot_data_version,
+        version_map,
+    )?;
 
-        snapshot_memory_to_sync(vmm, "127.0.0.1:2222", &params.snapshot_type)?;
-    } else {
-        snapshot_state_to_file(
-            &microvm_state,
-            &params.snapshot_path,
-            snapshot_data_version,
-            version_map,
-        )?;
+    snapshot_memory_to_file(vmm, &params.mem_file_path, &params.snapshot_type)?;
 
-        snapshot_memory_to_file(vmm, &params.mem_file_path, &params.snapshot_type)?;
-    }
+    Ok(())
+}
+
+/// Snapshot and remote-synchronize
+pub fn execute_sync_snapshot(
+    vmm: &mut Vmm,
+    params: &SyncSnapshotParams,
+    version_map: VersionMap,
+) -> std::result::Result<(), SyncSnapshotError> {
+    // Fail early from invalid target version.
+    //    let snapshot_data_version = get_snapshot_data_version(&params.version, &version_map, &vmm)?;
+
+    let microvm_state = vmm
+        .save_state()
+        .map_err(CreateSnapshotError::MicrovmState)
+        .expect("save state");
+
+    sync_snapshot_memory(vmm, &params).expect("sync_snapshot_memory");
 
     Ok(())
 }
@@ -311,7 +340,6 @@ fn snapshot_memory_to_file(
                 .map_err(Memory)
         }
         SnapshotType::Full => vmm.guest_memory().dump(&mut file).map_err(Memory),
-        SnapshotType::Sync => return Ok(()),
     }?;
     file.flush().map_err(|e| MemoryBackingFile("flush", e))?;
     file.sync_all()

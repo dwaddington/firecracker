@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex};
 use super::Error as VmmError;
 #[cfg(not(test))]
 use super::{
-    builder::build_microvm_for_boot, persist::create_snapshot, persist::restore_from_snapshot,
-    resources::VmResources, Vmm,
+    builder::build_microvm_for_boot, persist::create_snapshot, persist::execute_sync_snapshot,
+    persist::restore_from_snapshot, resources::VmResources, Vmm,
 };
-use crate::persist::{CreateSnapshotError, LoadSnapshotError};
+use crate::persist::{CreateSnapshotError, LoadSnapshotError, SyncSnapshotError};
 use crate::resources::VmmConfig;
 use crate::version_map::VERSION_MAP;
 use crate::vmm_config::balloon::{
@@ -28,7 +28,9 @@ use crate::vmm_config::mmds::{MmdsConfig, MmdsConfigError};
 use crate::vmm_config::net::{
     NetworkInterfaceConfig, NetworkInterfaceError, NetworkInterfaceUpdateConfig,
 };
-use crate::vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams, SnapshotType, SyncSnapshotParams};
+use crate::vmm_config::snapshot::{
+    CreateSnapshotParams, LoadSnapshotParams, SnapshotType, SyncSnapshotParams,
+};
 use crate::vmm_config::vsock::{VsockConfigError, VsockDeviceConfig};
 use crate::vmm_config::{self, RateLimiterUpdate};
 use crate::{builder::StartMicrovmError, EventManager};
@@ -58,9 +60,7 @@ pub enum VmmAction {
     /// after the microVM has booted and only when the microVM is in `Paused` state.
     CreateSnapshot(CreateSnapshotParams),
     /// Start continuous synchronization
-    StartSnapshotSync(SyncSnapshotParams),
-    /// Stop continuous synchronization
-    StopSnapshotSync,
+    SyncSnapshot(SyncSnapshotParams),
     /// Get the balloon device configuration.
     GetBalloonConfig,
     /// Get the ballon device latest statistics.
@@ -158,6 +158,8 @@ pub enum VmmActionError {
     StartMicrovm(StartMicrovmError),
     /// The action `SetVsockDevice` failed because of bad user input.
     VsockConfig(VsockConfigError),
+    /// Synchronization errorr
+    SyncSnapshot(SyncSnapshotError),
 }
 
 impl Display for VmmActionError {
@@ -193,6 +195,7 @@ impl Display for VmmActionError {
                         .to_string()
                 }
                 StartMicrovm(err) => err.to_string(),
+                SyncError => "Sync error.".to_string(),
                 // The action `SetVsockDevice` failed because of bad user input.
                 VsockConfig(err) => err.to_string(),
             }
@@ -338,8 +341,7 @@ impl<'a> PrebootApiController<'a> {
             StartMicroVm => self.start_microvm(),
             // Operations not allowed pre-boot.
             CreateSnapshot(_)
-            | StartSnapshotSync(_)
-            | StopSnapshotSync
+            | SyncSnapshot(_)
             | FlushMetrics
             | Pause
             | Resume
@@ -494,8 +496,7 @@ impl RuntimeApiController {
         match request {
             // Supported operations allowed post-boot.
             CreateSnapshot(snapshot_create_cfg) => self.create_snapshot(&snapshot_create_cfg),
-            StartSnapshotSync(sync_cfg) => self.start_sync(&sync_cfg),
-            StopSnapshotSync => { info!("** StopSnapshotSync: not implemented"); Ok(VmmData::Empty) },
+            SyncSnapshot(sync_cfg) => self.sync_snapshot(&sync_cfg),
             FlushMetrics => self.flush_metrics(),
             GetBalloonConfig => self
                 .vmm
@@ -657,25 +658,30 @@ impl RuntimeApiController {
                     elapsed_time_us
                 );
             }
-            SnapshotType::Sync => {
-                let elapsed_time_us = update_metric_with_elapsed_time(
-                    &METRICS.latencies_us.vmm_sync_create_snapshot,
-                    create_start_us,
-                );
-                info!(
-                    "'sync diff snapshot' VMM action took {} us.",
-                    elapsed_time_us
-                );
-            }
         }
         Ok(VmmData::Empty)
     }
 
-    fn start_sync(&mut self, create_params: &SyncSnapshotParams) -> ActionResult {
-        //let mut vmm = self.vmm.lock().expect("Poisoned lock");
+    /// Perform snapshort synchronization across network
+    fn sync_snapshot(&mut self, sync_params: &SyncSnapshotParams) -> ActionResult {
+        let start_us = utils::time::get_time_us(utils::time::ClockType::Monotonic);
+
+        // pause VM
         self.pause();
-        info!("START SYNC START SYNC START SYNC START SYNC");
+
+        {
+            let mut locked_vmm = self.vmm.lock().unwrap();
+            execute_sync_snapshot(&mut locked_vmm, sync_params, VERSION_MAP.clone())
+                .map_err(VmmActionError::SyncSnapshot)?;
+        }
+
+        // resume VM
         self.resume();
+
+        let elapsed_time_us =
+            update_metric_with_elapsed_time(&METRICS.latencies_us.vmm_sync_snapshot, start_us);
+        info!("'sync snapshot' VMM action took {} us.", elapsed_time_us);
+
         Ok(VmmData::Empty)
     }
 

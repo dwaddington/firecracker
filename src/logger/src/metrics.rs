@@ -637,6 +637,8 @@ pub struct PerformanceMetrics {
     pub vmm_pause_vm: SharedStoreMetric,
     /// Measures the microVM resuming duration, at the VMM level, in microseconds.
     pub vmm_resume_vm: SharedStoreMetric,
+    /// Measures the microVM sync, at the VMM level, in microseconds.
+    pub vmm_sync_snapshot: SharedStoreMetric,
 }
 
 /// Metrics specific to the RTC device.

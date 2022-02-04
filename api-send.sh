@@ -93,9 +93,9 @@ function vm_snapshot_sync_create {
     }'
 }
 
-function vm_snapshot_sync_start {
+function vm_sync_snapshot {
     curl --unix-socket /tmp/firecracker.socket -i \
-    -X PUT 'http://localhost/snapshot/startsync' \
+    -X PUT 'http://localhost/snapshot/sync' \
     -H  'Accept: application/json' \
     -H  'Content-Type: application/json' \
     -d '{
@@ -166,8 +166,8 @@ if [ "$1" == "syncbatch" ] ; then
     done
 fi
 
-if [ "$1" == "startsync" ] ; then
-    vm_snapshot_sync_start
+if [ "$1" == "syncsnapshot" ] ; then
+    vm_sync_snapshot
 fi
     
 
