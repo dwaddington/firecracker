@@ -15,6 +15,22 @@ static CACHE_LINE_SIZE: usize = 64;
 
 type SignalType = u64;
 
+/// Offset-length pair
+#[derive(Default)]
+pub struct OffsetLength {
+    /// Offset in bytes
+    pub offset: usize,
+    /// Length in bytes
+    pub len: usize,
+}
+
+impl OffsetLength {
+    /// Instantiate new offset-length pair with zeros
+    pub fn new() -> OffsetLength {
+        OffsetLength { offset: 0, len: 0 }
+    }
+}
+
 /// Remote synchronization state
 pub struct SyncState {
     dirty: bool,
@@ -25,6 +41,8 @@ pub struct SyncState {
     tx_channel: Sender<SignalType>,
     /// Buffer for XOR data
     pub xor_data: Arc<Mutex<Vec<u64>>>,
+    /// Buffer for XOR offset
+    pub xor_offsets: Arc<Mutex<Vec<OffsetLength>>>,
 }
 
 /// Synchronization worker thread entry point
@@ -32,6 +50,7 @@ fn thread_entry(
     exit_bool: Arc<AtomicBool>,
     rx: Receiver<SignalType>,
     xor_buffer: Arc<Mutex<Vec<u64>>>,
+    xor_offsets: Arc<Mutex<Vec<OffsetLength>>>,
 ) {
     while !exit_bool.load(Ordering::SeqCst) {
         info!("worker thread receiving on channel......");
@@ -40,17 +59,26 @@ fn thread_entry(
             Ok(data) => {
                 let mut xor_memory = xor_buffer.lock().expect("Poison mutex");
                 assert!(xor_memory.len() == 0 || xor_memory.len() % (CACHE_LINE_SIZE / 8) == 0); // check whole cache lines
-                debug!(
-                    "rx recv code: {} with xor buffer {}",
-                    data,
-                    xor_memory.len()
-                );
-                info!(
-                    "Synchronization worker thread received XOR memory {} bytes",
-                    xor_memory.len()
-                );
-                // now empty it!
+
+                {
+                    for pair in xor_offsets.lock().expect("Poison mutex").iter() {
+                        debug!("blob {}:{}", &pair.offset, &pair.len);
+                    }
+
+                    debug!(
+                        "rx recv code: {} with xor buffer {}",
+                        data,
+                        xor_memory.len()
+                    );
+                    info!(
+                        "Synchronization worker thread received XOR memory {} bytes",
+                        xor_memory.len()
+                    );
+                }
+
+                // now empty vectors!
                 xor_memory.clear();
+                xor_offsets.lock().expect("Poison mutex").clear();
             }
             Err(err) => debug!("rx not OK {}", err),
         };
@@ -66,15 +94,19 @@ impl SyncState {
         let thread_ref = base.clone();
         let xorbuffer = Arc::new(Mutex::<Vec<u64>>::new(vec![]));
         let xd = xorbuffer.clone();
+        let xorbuffer_offsets = Arc::new(Mutex::<Vec<OffsetLength>>::new(vec![]));
+        let xo = xorbuffer_offsets.clone();
+
         SyncState {
             dirty: false,
             prior_buffer: vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE],
             thread: Some(thread::spawn(move || {
-                thread_entry(thread_ref, rx, xorbuffer);
+                thread_entry(thread_ref, rx, xorbuffer, xorbuffer_offsets);
             })),
             exit_thread: base,
             tx_channel: tx,
             xor_data: xd,
+            xor_offsets: xo,
         }
     }
 

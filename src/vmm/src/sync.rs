@@ -183,12 +183,14 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         if vmm.sync_engine.is_copied() {
             // Safely get hold of XOR buffer
             let mut xor_buffer = vmm.sync_engine.xor_data.lock().expect("Poison lock");
+            let mut xor_offsets = vmm.sync_engine.xor_offsets.lock().expect("Poison lock");
             let mut writer =
                 RegionProcessor::new(&mut vmm.sync_engine.prior_buffer, &mut xor_buffer);
             vmm.guest_memory
                 .iter()
                 .enumerate()
                 .try_for_each(|(slot, region)| {
+                    debug!("Synchronizing slot {} ...", &slot);
                     let kvm_bitmap = dirty_bitmap.get(&slot).unwrap();
                     let mut dirty_batch_start: u64 = 0;
                     let mut write_size = 0;
@@ -202,7 +204,11 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
                                 // We are at the start of a new batch of dirty pages.
                                 if write_size == 0 {
                                     dirty_batch_start = page_offset as u64;
-                                    //debug!("XXX: dirty page {}", dirty_batch_start);
+                                    //                                    debug!("XXX: dirty page {}", dirty_batch_start);
+                                    assert!(
+                                        dirty_batch_start % 4096 == 0,
+                                        "should be 4KiB page aligned"
+                                    );
                                 }
                                 write_size += page_size;
                             } else if write_size > 0 {
@@ -216,6 +222,10 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
                                     )
                                     .expect("write_all_to region failed");
 
+                                xor_offsets.push(crate::sync_backend::OffsetLength {
+                                    offset: dirty_batch_start as usize,
+                                    len: write_size,
+                                });
                                 page_count += write_size / page_size;
 
                                 write_size = 0;
@@ -234,8 +244,8 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         }
 
         debug!(
-            "Completed memory XORs and update-copy on dirty pages: time={}ms page-count={}",
-            time_start.elapsed().as_millis(),
+            "Completed memory XORs and update-copy on dirty pages: time={}us page-count={}",
+            time_start.elapsed().as_micros(),
             page_count
         );
     }
