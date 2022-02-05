@@ -11,7 +11,6 @@ use std::time::Instant;
 use crate::memory_snapshot;
 use crate::memory_snapshot::SnapshotMemory;
 use crate::persist::CreateSnapshotError;
-use crate::sync_backend::SyncWork;
 use crate::vmm_config::snapshot::SyncSnapshotParams;
 use crate::{MicrovmState, Vmm};
 
@@ -102,7 +101,11 @@ fn full_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), CreateSnapshot
             let new_version =
                 unsafe { std::slice::from_raw_parts(region.offset as *const u64, region.size / 8) };
 
-            do_xor(new_version, region.offset as usize, &vmm.sync_engine.buffer);
+            do_xor(
+                new_version,
+                region.offset as usize,
+                &vmm.sync_engine.prior_buffer,
+            );
         }
     } else {
         debug!("snapshot_memory_to_sync: skipping, no existing copy");
@@ -115,13 +118,18 @@ fn full_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), CreateSnapshot
 struct RegionProcessor<'a> {
     prior_full_snapshot: &'a mut Vec<u8>,
     offset: usize,
+    xor_changes: &'a mut Vec<u64>,
 }
 
 impl<'a> RegionProcessor<'a> {
-    fn new(full_memory_snapshot: &'a mut Vec<u8>) -> RegionProcessor<'a> {
+    fn new(
+        full_memory_snapshot: &'a mut Vec<u8>,
+        xor_buffer: &'a mut Vec<u64>,
+    ) -> RegionProcessor<'a> {
         RegionProcessor {
             prior_full_snapshot: full_memory_snapshot,
             offset: 0,
+            xor_changes: xor_buffer,
         }
     }
 }
@@ -137,8 +145,8 @@ impl<'w> std::io::Write for RegionProcessor<'w> {
 
         // 64-bit iterator
         for i in 0..new_slice.len() {
-            // pretend to xor
-            let _ = new_slice[i] ^ prior_slice[i];
+            // perform xor diff
+            self.xor_changes.push(new_slice[i] ^ prior_slice[i]);
             // do update
             prior_slice[i] = new_slice[i];
         }
@@ -153,7 +161,7 @@ impl<'w> std::io::Write for RegionProcessor<'w> {
 /// Perform a dirty-page based snapshot
 fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_snapshot::Error> {
     // we need a full base copy to start with
-    if vmm.sync_engine.is_copied() == false {
+    if !vmm.sync_engine.is_copied() {
         let time_start = Instant::now();
         vmm.copy_all_guest_memory();
         debug!(
@@ -172,13 +180,15 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         let mut page_count: usize = 0;
 
         // we need to make sure we have a full prior copy of memory
-        if vmm.sync_engine.is_copied() == true {
-            let mut writer = RegionProcessor::new(&mut vmm.sync_engine.buffer);
+        if vmm.sync_engine.is_copied() {
+            // Safely get hold of XOR buffer
+            let mut xor_buffer = vmm.sync_engine.xor_data.lock().expect("Poison lock");
+            let mut writer =
+                RegionProcessor::new(&mut vmm.sync_engine.prior_buffer, &mut xor_buffer);
             vmm.guest_memory
                 .iter()
                 .enumerate()
                 .try_for_each(|(slot, region)| {
-                    //                    debug!("XXX: slot={} region.size={:?}", slot, region.size());
                     let kvm_bitmap = dirty_bitmap.get(&slot).unwrap();
                     let mut dirty_batch_start: u64 = 0;
                     let mut write_size = 0;
@@ -215,6 +225,12 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
 
                     Ok(())
                 })?;
+
+            debug!(
+                "Signalling worker that XOR buffer is ready {}",
+                xor_buffer.len()
+            );
+            vmm.sync_engine.signal_work(xor_buffer.len() as u64);
         }
 
         debug!(
@@ -232,70 +248,10 @@ pub fn sync_snapshot_memory(
     vmm: &mut Vmm,
     params: &SyncSnapshotParams,
 ) -> std::result::Result<(), CreateSnapshotError> {
-    //    full_memory_snapshot(vmm);
+    // Dirtypage XOR snapshot
     dirtypage_memory_snapshot(vmm).expect("dirtypage memory snapshot failed");
-    vmm.sync_engine.send_work(SyncWork {
-        buffer: vec![1, 2, 3],
-    });
 
-    //     let mut stream = TcpStream::connect(url).expect("unable to connect to remote server");
-    //     // let mut file = OpenOptions::new()
-    //     //     .write(true)
-    //     //     .create(true)
-    //     //     .truncate(true)
-    //     //     .open(mem_file_path)
-    //     //     .map_err(|e| MemoryBackingFile("open", e))?;
-    //     //    file.set_len((mem_size_mib * 1024 * 1024) as u64)
-    //   //      .map_err(|e| MemoryBackingFile("set_length", e))?;
-
-    //     // Set the length of the file to the full size of the memory area.
-    //     let mem_size_mib = mem_size_mib(vmm.guest_memory());
-    //     debug!("snapshot_memory_to_sync: size MiB = {}", &mem_size_mib);
-
-    //     assert!(snapshot_type == &SnapshotType::Sync);
-
-    //
-
-    //     // seccomp needs to be set to allow us to allocate new memory
-    //     let buffer_memory = Vec::with_capacity((mem_size_mib * 1024 * 1024) as usize);
-    //     let mut buffer = Cursor::new(buffer_memory);
-
-    //     // send dirty pages
-    //     let dirty_bitmap = vmm.get_dirty_bitmap().map_err(DirtyBitmap)?;
-    //     vmm.guest_memory()
-    //         .dump_dirty(&mut buffer, &dirty_bitmap)
-    //         .map_err(Memory);
-
-    //     stream.write(buffer.get_ref());
-
-    // //    vmm.guest_memory().dump(&mut dump_copy).map_err(Memory)?;
-    //     info!("snapshot_memory_to_sync: copied memory to new region");
-
-    //     for region in memory_regions.regions {
-    //         debug!("memory region -> addr:{:#X} size:{}MiB", region.base_address, region.size / (1024*1024));
-    //         let ga = GuestAddress(region.base_address);
-    //         let raw_slice = unsafe { std::slice::from_raw_parts(region.base_address as *const u8, region.size); };
-    //     }
-
-    //    debug!("memory state -> {:?}", memory_state);
-    // diff
-    //let dirty_bitmap = vmm.get_dirty_bitmap().map_err(DirtyBitmap)?;
-    //        vmm.guest_memory()
-    //            .dump_dirty(&mut file, &dirty_bitmap)
-    //            .map_err(Memory)
-
-    // full
-
-    //     fn dump<T: std::io::Write>(&self, writer: &mut T) -> std::result::Result<(), Error> {
-    //     self.iter()
-    //         .try_for_each(|region| {
-    //             region.write_all_to(MemoryRegionAddress(0), writer, region.len() as usize)
-    //         })
-    //         .map_err(Error::WriteMemory)
-    // }
-
-    // file.flush().map_err(|e| MemoryBackingFile("flush", e))?;
-    // file.sync_all()
-    //     .map_err(|e| MemoryBackingFile("sync_all", e))
+    // Alternative full snapshot
+    //    full_memory_snapshot(vmm);
     Ok(())
 }

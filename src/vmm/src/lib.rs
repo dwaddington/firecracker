@@ -272,17 +272,17 @@ impl Vmm {
             total_size += r.size;
         }
 
-        if total_size > self.sync_engine.buffer.len() {
+        if total_size > self.sync_engine.prior_buffer.len() {
             self.sync_engine
-                .buffer
-                .resize(total_size - self.sync_engine.buffer.len(), 0);
+                .prior_buffer
+                .resize(total_size - self.sync_engine.prior_buffer.len(), 0);
             debug!(
                 "update_sync_engine: expanded memory to {}",
-                &self.sync_engine.buffer.len()
+                &self.sync_engine.prior_buffer.len()
             );
         }
 
-        let mut buffer = Cursor::new(&mut self.sync_engine.buffer);
+        let mut buffer = Cursor::new(&mut self.sync_engine.prior_buffer);
         self.guest_memory
             .dump(&mut buffer)
             .expect("update sync dump failed");
