@@ -16,6 +16,7 @@ use std::fmt::{Display, Formatter};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
+use vm_memory::GuestMemory;
 use vm_superio::Serial;
 
 #[cfg(target_arch = "aarch64")]
@@ -288,6 +289,7 @@ fn create_vmm_and_vcpus(
         setup_interrupt_controller(&mut vm, vcpu_count)?;
     }
 
+    let mem_size = crate::mem_size_mib(&guest_memory) as usize;
     let vmm = Vmm {
         events_observer: Some(Box::new(SerialStdin::get())),
         instance_info: instance_info.clone(),
@@ -299,7 +301,7 @@ fn create_vmm_and_vcpus(
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
         pio_device_manager,
-        sync_engine: SyncState::new(),
+        sync_engine: SyncState::new(mem_size),
     };
 
     Ok((vmm, vcpus))

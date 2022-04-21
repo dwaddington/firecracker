@@ -159,10 +159,11 @@ fi
 if [ "$1" == "syncbatch" ] ; then
     for i in {1..120}
     do
-        vm_pause
-        vm_snapshot_sync_create
-        vm_resume
-        sleep 1
+        vm_sync_snapshot
+#        vm_pause
+#        vm_snapshot_sync_create
+#        vm_resume
+        sleep 0.2
     done
 fi
 

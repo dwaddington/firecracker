@@ -5,6 +5,7 @@
 use std::fs::OpenOptions;
 use std::io::Result;
 use std::io::Write;
+use std::io::BufWriter;
 use std::time::Instant;
 
 /// Support for snapshot synchronization
@@ -135,7 +136,7 @@ impl<'a> RegionProcessor<'a> {
 }
 
 impl<'w> std::io::Write for RegionProcessor<'w> {
-    /// Write applied to dirty pages (in batch)
+    /// Write applied to dirty pages (in batches)
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let offset64 = self.offset / 8;
         let full_prior =
@@ -143,7 +144,25 @@ impl<'w> std::io::Write for RegionProcessor<'w> {
         let new_slice = bytemuck::cast_slice::<u8, u64>(buf);
         let prior_slice = &mut full_prior[offset64..offset64 + new_slice.len()];
 
-        // 64-bit iterator
+        assert!(new_slice.len() == prior_slice.len());
+        println!("sync region processor: offset={} len={}", self.offset, buf.len());
+
+        // temporary - write out dirty pages
+        {
+            let vmpages_file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open("./vmpages.dat")?;
+            let mut vmpages_writer = BufWriter::new(vmpages_file);
+            let ll = buf.len() as u64;
+            vmpages_writer.write(&ll.to_ne_bytes()).expect("vmpages.dat write failed");
+            vmpages_writer.write(&buf).expect("vmpages.dat write failed");
+            let mut p = vec![0; prior_slice.len()];
+            let prior = prior_slice.copy_from_slice(&mut p);
+            vmpages_writer.write(bytemuck::cast_slice::<u64, u8>(p.as_slice())).expect("vmpages.dat write failed");
+        }
+        
+        // iterator on 64-bit slices
         for i in 0..new_slice.len() {
             // perform xor diff
             self.xor_changes.push(new_slice[i] ^ prior_slice[i]);
@@ -195,6 +214,7 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
                     let mut dirty_batch_start: u64 = 0;
                     let mut write_size = 0;
 
+                    // iterate dirty page bitmap
                     for (i, v) in kvm_bitmap.iter().enumerate() {
                         for j in 0..64 {
                             let is_kvm_page_dirty = ((v >> j) & 1u64) != 0u64;

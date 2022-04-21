@@ -36,8 +36,11 @@ pub struct SyncState {
     dirty: bool,
     /// Buffer holding prior memory snapshot
     pub prior_buffer: Vec<u8>,
+    /// Join handle for thread
     thread: Option<JoinHandle<()>>,
+    /// Flag for exiting thread
     exit_thread: Arc<AtomicBool>,
+    /// Channel used to signal new data batch
     tx_channel: Sender<SignalType>,
     /// Buffer for XOR data
     pub xor_data: Arc<Mutex<Vec<u64>>>,
@@ -88,7 +91,7 @@ fn thread_entry(
 
 impl SyncState {
     /// Instantiate new sync state
-    pub fn new() -> SyncState {
+    pub fn new(snapshot_buffer_size_mib: usize) -> SyncState {
         let (tx, rx): (Sender<SignalType>, Receiver<SignalType>) = mpsc::channel();
         let base = Arc::new(AtomicBool::new(false));
         let thread_ref = base.clone();
@@ -99,7 +102,7 @@ impl SyncState {
 
         SyncState {
             dirty: false,
-            prior_buffer: vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE],
+            prior_buffer: vec![0; snapshot_buffer_size_mib << 20],
             thread: Some(thread::spawn(move || {
                 thread_entry(thread_ref, rx, xorbuffer, xorbuffer_offsets);
             })),
@@ -143,6 +146,6 @@ impl SyncState {
 
 impl Default for SyncState {
     fn default() -> SyncState {
-        SyncState::new()
+        SyncState::new(INITIAL_SNAPSHOT_BUFFER_SIZE)
     }
 }
