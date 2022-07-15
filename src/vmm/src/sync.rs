@@ -59,27 +59,27 @@ pub fn snapshot_state_to_sync(
         .map_err(|e| SnapshotBackingFile("sync_all", e))
 }
 
-/// Perform XOR across two memories
-fn do_xor(p: &[u64], p_base: usize, q: &Vec<u8>) {
-    let slice_q = bytemuck::cast_slice::<u8, u64>(q.as_slice());
-    assert!(slice_q.len() >= p.len());
+// /// Perform XOR across two memories
+// fn do_xor(p: &[u64], p_base: usize, q: &Vec<u8>) {
+//     let slice_q = bytemuck::cast_slice::<u8, u64>(q.as_slice());
+//     assert!(slice_q.len() >= p.len());
 
-    debug!("p base :{:#X}", p_base);
-    let scaled_base = p_base / 8;
+//     debug!("p base :{:#X}", p_base);
+//     let scaled_base = p_base / 8;
 
-    debug!("slice_q len   :{:#X}", slice_q.len());
-    debug!("p scaled base :{:#X}", scaled_base);
-    debug!("p len         :{:#X}", p.len());
+//     debug!("slice_q len   :{:#X}", slice_q.len());
+//     debug!("p scaled base :{:#X}", scaled_base);
+//     debug!("p len         :{:#X}", p.len());
 
-    let time_start = Instant::now();
-    for i in 0..p.len() {
-        let _ = p[i] ^ slice_q[scaled_base + i];
-    }
-    debug!(
-        "Complete memory: XOR time={}ms",
-        time_start.elapsed().as_millis()
-    );
-}
+//     let time_start = Instant::now();
+//     for i in 0..p.len() {
+//         let _ = p[i] ^ slice_q[scaled_base + i];
+//     }
+//     debug!(
+//         "Complete memory: XOR time={}ms",
+//         time_start.elapsed().as_millis()
+//     );
+// }
 
 #[allow(dead_code)]
 fn print_type_of<T>(_: T) {
@@ -104,46 +104,47 @@ fn full_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), CreateSnapshot
             let new_version =
                 unsafe { std::slice::from_raw_parts(region.offset as *const u64, region.size / 8) };
 
-            do_xor(new_version, region.offset as usize, &vmm.sync_state.buffer);
+            //do_xor(new_version, region.offset as usize, &vmm.sync_state.buffer);
         }
     } else {
         debug!("snapshot_memory_to_sync: skipping, no existing copy");
     }
 
-    vmm.copy_all_guest_memory();
     Ok(())
 }
 
-struct RegionProcessor<'a> {
-    prior_full_snapshot: &'a mut Vec<u8>,
+struct RegionProcessor {
     offset: usize,
 }
 
-impl<'a> RegionProcessor<'a> {
-    fn new(full_memory_snapshot: &'a mut Vec<u8>) -> RegionProcessor<'a> {
-        RegionProcessor {
-            prior_full_snapshot: full_memory_snapshot,
-            offset: 0,
-        }
+impl<'a> RegionProcessor {
+    fn new() -> RegionProcessor {
+        RegionProcessor { offset: 0 }
     }
 }
 
-impl<'w> std::io::Write for RegionProcessor<'w> {
+impl<'w> std::io::Write for RegionProcessor {
     /// Write applied to dirty pages (in batch)
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let offset64 = self.offset / 8;
-        let full_prior =
-            bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
-        let new_slice = bytemuck::cast_slice::<u8, u64>(buf);
-        let prior_slice = &mut full_prior[offset64..offset64 + new_slice.len()];
+        // let full_prior =
+        //     bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
+        // let new_slice = bytemuck::cast_slice::<u8, u64>(buf);
+        // let prior_slice = &mut full_prior[offset64..offset64 + new_slice.len()];
+
+        debug!(
+            "XXX: writing segment offset={} len={}",
+            &offset64,
+            buf.len()
+        );
 
         // 64-bit iterator
-        for i in 0..new_slice.len() {
-            // pretend to xor
-            let _ = new_slice[i] ^ prior_slice[i];
-            // do update
-            prior_slice[i] = new_slice[i];
-        }
+        // for i in 0..new_slice.len() {
+        //     // pretend to xor
+        //     let _ = new_slice[i] ^ prior_slice[i];
+        //     // do update
+        //     prior_slice[i] = new_slice[i];
+        // }
         Ok(buf.len())
     }
 
@@ -169,7 +170,7 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         let dirty_bitmap = vmm.get_dirty_bitmap().expect("get dirty bitmap failed");
 
         let page_size = get_page_size().map_err(memory_snapshot::Error::PageSize)?;
-        let mut writer = RegionProcessor::new(&mut vmm.sync_state.buffer);
+        let mut writer = RegionProcessor::new();
 
         let time_start = Instant::now();
         let mut page_count: usize = 0;
@@ -180,7 +181,7 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
                 .iter()
                 .enumerate()
                 .try_for_each(|(slot, region)| {
-                    //                    debug!("XXX: slot={} region.size={:?}", slot, region.size());
+                    //debug!("XXX: slot={} region.size={:?}", slot, region.size());
                     let kvm_bitmap = dirty_bitmap.get(&slot).unwrap();
                     let mut dirty_batch_start: u64 = 0;
                     let mut write_size = 0;

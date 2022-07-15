@@ -242,7 +242,6 @@ pub(crate) fn mem_size_mib(guest_memory: &GuestMemoryMmap) -> u64 {
 /// Remote synchronization state
 pub struct SyncState {
     dirty: bool,
-    buffer: Vec<u8>,
 }
 
 static INITIAL_SNAPSHOT_BUFFER_SIZE: usize = 8 * usize::pow(1024, 3); // 8GiB
@@ -250,10 +249,7 @@ static INITIAL_SNAPSHOT_BUFFER_SIZE: usize = 8 * usize::pow(1024, 3); // 8GiB
 impl SyncState {
     /// Instantiate new sync state
     pub fn new() -> SyncState {
-        SyncState {
-            dirty: false,
-            buffer: vec![0; INITIAL_SNAPSHOT_BUFFER_SIZE],
-        }
+        SyncState { dirty: false }
     }
 
     /// Return true if dirty
@@ -283,28 +279,28 @@ pub struct Vmm {
 }
 
 impl Vmm {
-    /// Update sync state
+    /// Called on first snapshot instance to copy all of the memory
     pub fn copy_all_guest_memory(&mut self) {
-        let mut total_size: usize = 0;
+        // iterate regions
+        let memory_regions = self.guest_memory.describe();
 
-        for r in self.guest_memory.describe().regions {
-            total_size += r.size;
-        }
-
-        if total_size > self.sync_state.buffer.len() {
-            self.sync_state
-                .buffer
-                .resize(total_size - self.sync_state.buffer.len(), 0);
+        for region in memory_regions.regions {
             debug!(
-                "update_sync_state: expanded memory to {}",
-                &self.sync_state.buffer.len()
+                "memory region -> offset:{:#X} size:{}MiB",
+                region.offset,
+                region.size / (1024 * 1024)
             );
+            
         }
+        self.guest_memory.iter().for_each(|region|{
+            let host_addr = region.as_ptr(); // also as_slice
+            debug!("host address: {:?} {}", host_addr, region.len());
+        });
 
-        let mut buffer = Cursor::new(&mut self.sync_state.buffer);
-        self.guest_memory
-            .dump(&mut buffer)
-            .expect("update sync dump failed");
+        // let mut buffer = Cursor::new(&mut self.sync_state.buffer);
+        // self.guest_memory
+        //     .dump(&mut buffer)
+        //     .expect("update sync dump failed");
         self.sync_state.dirty = true;
     }
 
