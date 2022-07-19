@@ -96,3 +96,11 @@ pub fn rte_malloc(tag: &str, len: usize, align: usize) -> Result<DpdkMemory, Err
     }
     Ok(DpdkMemory::new(rptr, len))
 }
+
+pub fn raw_rte_malloc(tag: &str, len: usize, align: usize) -> *mut u8 {
+    let c_tag = CString::new(tag).unwrap();
+    
+    let rptr = unsafe { mss_api::mss_rte_malloc(c_tag.as_ptr(), len as u64, align as u32) };
+    return rptr as *mut u8;
+}
+   

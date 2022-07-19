@@ -110,32 +110,60 @@ fn build_guarded_region(
     }
 }
 
+fn build_dpdk_region(
+    maybe_file_offset: Option<FileOffset>,
+    size: usize,
+    prot: i32,
+    flags: i32,
+    track_dirty_pages: bool,
+) -> Result<MmapRegion, MmapRegionError> {
+
+    let page_size = utils::get_page_size().expect("Cannot retrieve page size.");
+
+    /* allocate host memory from RTE */
+    let region_addr = mss::raw_rte_malloc("VM-guest", size, page_size);
+    println!("MSS: allocated VM-guest memory ADDR {:?}", region_addr);
+
+    let bitmap = match track_dirty_pages {
+        true => Some(AtomicBitmap::with_len(size)),
+        false => None,
+    };
+
+    unsafe {
+        MmapRegionBuilder::new_with_bitmap(size, bitmap)
+            .with_raw_mmap_pointer(region_addr as *mut u8)
+            .with_mmap_prot(prot)
+            .with_mmap_flags(flags)
+            .build()
+    }
+}
+
+
 /// Helper for creating the guest memory.
 pub fn create_guest_memory(
     regions: &[(Option<FileOffset>, GuestAddress, usize)],
     track_dirty_pages: bool,
 ) -> std::result::Result<GuestMemoryMmap, Error> {
 
-    println!("BUILDING CREATE GUEST MEMORY!!!!!!!!!!!!!");
-
-//    mss::init("1,2").unwrap();
-//    println!("ALLOCATING");
-//    let rte_mem = mss::rte_malloc("myDPDKmem", 4096, 4096);
-//    println!("rte mem {:?}", rte_mem);
-    
     let prot = libc::PROT_READ | libc::PROT_WRITE;
     let mut mmap_regions = Vec::with_capacity(regions.len());
 
     for region in regions {
-        println!("CREATING REGION GUEST MEMORY!!!!!!!!!!!!!");
+
         let flags = match region.0 {
             None => libc::MAP_NORESERVE | libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
             Some(_) => libc::MAP_NORESERVE | libc::MAP_PRIVATE,
         };
 
+        // let mmap_region =
+        //     build_guarded_region(region.0.clone(), region.2, prot, flags, track_dirty_pages)
+        //     .map_err(Error::MmapRegion)?;
+
+        /* build region using DPDK memory */
         let mmap_region =
-            build_guarded_region(region.0.clone(), region.2, prot, flags, track_dirty_pages)
-                .map_err(Error::MmapRegion)?;
+            build_dpdk_region(region.0.clone(), region.2, prot, flags, track_dirty_pages)
+            .map_err(Error::MmapRegion)?;
+
 
         mmap_regions.push(GuestRegionMmap::new(mmap_region, region.1)?);
     }

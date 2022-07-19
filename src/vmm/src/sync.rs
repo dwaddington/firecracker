@@ -126,15 +126,15 @@ impl<'a> RegionProcessor {
 impl<'w> std::io::Write for RegionProcessor {
     /// Write applied to dirty pages (in batch)
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        let offset64 = self.offset / 8;
+//        let offset64 = self.offset / 8;
         // let full_prior =
         //     bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
         // let new_slice = bytemuck::cast_slice::<u8, u64>(buf);
         // let prior_slice = &mut full_prior[offset64..offset64 + new_slice.len()];
 
         debug!(
-            "XXX: writing segment offset={} len={}",
-            &offset64,
+            "XYZ: writing segment offset={} len={}",
+            self.offset,
             buf.len()
         );
 
@@ -156,15 +156,15 @@ impl<'w> std::io::Write for RegionProcessor {
 /// Perform a dirty-page based snapshot
 fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_snapshot::Error> {
     // we need a full base copy to start with
-    if vmm.sync_state.is_copied() == false {
-        let time_start = Instant::now();
-        vmm.copy_all_guest_memory();
-        debug!(
-            "Completed full copy: time={}ms",
-            time_start.elapsed().as_millis()
-        );
-        return Ok(());
-    }
+    // if vmm.sync_state.is_copied() == false {
+    //     let time_start = Instant::now();
+    //     vmm.copy_all_guest_memory();
+    //     debug!(
+    //         "Completed full copy: time={}ms",
+    //         time_start.elapsed().as_millis()
+    //     );
+    //     return Ok(());
+    // }
 
     {
         let dirty_bitmap = vmm.get_dirty_bitmap().expect("get dirty bitmap failed");
@@ -176,52 +176,52 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         let mut page_count: usize = 0;
 
         // we need to make sure we have a full prior copy of memory
-        if vmm.sync_state.dirty {
-            vmm.guest_memory
-                .iter()
-                .enumerate()
-                .try_for_each(|(slot, region)| {
-                    //debug!("XXX: slot={} region.size={:?}", slot, region.size());
-                    let kvm_bitmap = dirty_bitmap.get(&slot).unwrap();
-                    let mut dirty_batch_start: u64 = 0;
-                    let mut write_size = 0;
+        //        if vmm.sync_state.dirty {
+        vmm.guest_memory
+            .iter()
+            .enumerate()
+            .try_for_each(|(slot, region)| {
+                //debug!("XXX: slot={} region.size={:?}", slot, region.size());
+                let kvm_bitmap = dirty_bitmap.get(&slot).unwrap();
+                let mut dirty_batch_start: u64 = 0;
+                let mut write_size = 0;
 
-                    for (i, v) in kvm_bitmap.iter().enumerate() {
-                        for j in 0..64 {
-                            let is_kvm_page_dirty = ((v >> j) & 1u64) != 0u64;
-                            let page_offset = ((i * 64) + j) * page_size;
-                            let is_firecracker_page_dirty = region.bitmap().dirty_at(page_offset);
-                            if is_kvm_page_dirty || is_firecracker_page_dirty {
-                                // We are at the start of a new batch of dirty pages.
-                                if write_size == 0 {
-                                    dirty_batch_start = page_offset as u64;
-                                    //debug!("XXX: dirty page {}", dirty_batch_start);
-                                }
-                                write_size += page_size;
-                            } else if write_size > 0 {
-                                writer.offset = dirty_batch_start as usize;
-                                // We are at the end of a batch of dirty pages.
-                                region
-                                    .write_all_to(
-                                        MemoryRegionAddress(dirty_batch_start),
-                                        &mut writer,
-                                        write_size,
-                                    )
-                                    .expect("write_all_to region failed");
-
-                                page_count += write_size / page_size;
-
-                                write_size = 0;
+                for (i, v) in kvm_bitmap.iter().enumerate() {
+                    for j in 0..64 {
+                        let is_kvm_page_dirty = ((v >> j) & 1u64) != 0u64;
+                        let page_offset = ((i * 64) + j) * page_size;
+                        let is_firecracker_page_dirty = region.bitmap().dirty_at(page_offset);
+                        if is_kvm_page_dirty || is_firecracker_page_dirty {
+                            // We are at the start of a new batch of dirty pages.
+                            if write_size == 0 {
+                                dirty_batch_start = page_offset as u64;
+                                //debug!("XXX: dirty page {}", dirty_batch_start);
                             }
+                            write_size += page_size;
+                        } else if write_size > 0 {
+                            writer.offset = dirty_batch_start as usize;
+                            // We are at the end of a batch of dirty pages.
+                            region
+                                .write_all_to(
+                                    MemoryRegionAddress(dirty_batch_start),
+                                    &mut writer,
+                                    write_size,
+                                )
+                                .expect("write_all_to region failed");
+
+                            page_count += write_size / page_size;
+
+                            write_size = 0;
                         }
                     }
+                }
 
-                    Ok(())
-                })?;
-        }
+                Ok(())
+            })?;
+        //        }
 
         debug!(
-            "Completed memory XORs and update-copy on dirty pages: time={}ms page-count={}",
+            "Completed DIRTY page iteration: time={}ms page-count={}",
             time_start.elapsed().as_millis(),
             page_count
         );

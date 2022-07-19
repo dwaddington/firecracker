@@ -290,9 +290,8 @@ impl Vmm {
                 region.offset,
                 region.size / (1024 * 1024)
             );
-            
         }
-        self.guest_memory.iter().for_each(|region|{
+        self.guest_memory.iter().for_each(|region| {
             let host_addr = region.as_ptr(); // also as_slice
             debug!("host address: {:?} {}", host_addr, region.len());
         });

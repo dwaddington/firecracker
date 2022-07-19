@@ -391,9 +391,9 @@ fn main() {
     //
     // See process_exitable() method of Subscriber trait for what triggers the exit_code.
     //
-    println!("##### calling mss::init");
-    mss::init("3").expect("mss::init failed");
-    println!("##### called mss::init");
+
+    // initialize MSS subsystem
+    mss::init("0").expect("mss::init failed");
 
     let exit_code = main_exitable();
     std::process::exit(exit_code);
