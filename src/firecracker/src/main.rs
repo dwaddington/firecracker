@@ -25,6 +25,8 @@ use vmm::vmm_config::instance_info::{InstanceInfo, VmState};
 use vmm::vmm_config::logger::{init_logger, LoggerConfig, LoggerLevel};
 use vmm::{resources::VmResources, EventManager, ExitCode};
 
+use mss::init;
+
 // The reason we place default API socket under /run is that API socket is a
 // runtime file.
 // see https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch03s15.html for more information.
@@ -389,6 +391,10 @@ fn main() {
     //
     // See process_exitable() method of Subscriber trait for what triggers the exit_code.
     //
+    println!("##### calling mss::init");
+    mss::init("3").expect("mss::init failed");
+    println!("##### called mss::init");
+
     let exit_code = main_exitable();
     std::process::exit(exit_code);
 }

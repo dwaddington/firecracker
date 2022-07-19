@@ -47,6 +47,7 @@ fn build_guarded_region(
     flags: i32,
     track_dirty_pages: bool,
 ) -> Result<MmapRegion, MmapRegionError> {
+
     let page_size = utils::get_page_size().expect("Cannot retrieve page size.");
     // Create the guarded range size (received size + X pages),
     // where X is defined as a constant GUARD_PAGE_COUNT.
@@ -114,10 +115,19 @@ pub fn create_guest_memory(
     regions: &[(Option<FileOffset>, GuestAddress, usize)],
     track_dirty_pages: bool,
 ) -> std::result::Result<GuestMemoryMmap, Error> {
+
+    println!("BUILDING CREATE GUEST MEMORY!!!!!!!!!!!!!");
+
+//    mss::init("1,2").unwrap();
+//    println!("ALLOCATING");
+//    let rte_mem = mss::rte_malloc("myDPDKmem", 4096, 4096);
+//    println!("rte mem {:?}", rte_mem);
+    
     let prot = libc::PROT_READ | libc::PROT_WRITE;
     let mut mmap_regions = Vec::with_capacity(regions.len());
 
     for region in regions {
+        println!("CREATING REGION GUEST MEMORY!!!!!!!!!!!!!");
         let flags = match region.0 {
             None => libc::MAP_NORESERVE | libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
             Some(_) => libc::MAP_NORESERVE | libc::MAP_PRIVATE,
@@ -381,5 +391,12 @@ mod tests {
                 assert!(region.bitmap().is_some());
             });
         }
+    }
+
+    #[test]
+    fn test_dpdk() {
+        println!("Testing DPDK ....");
+//        unsafe { core::arch::asm!("int3") };
+        mss::init("1,2").unwrap();
     }
 }
