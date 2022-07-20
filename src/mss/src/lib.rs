@@ -2,6 +2,7 @@ use std::ffi::CString;
 use std::fmt;
 use std::slice::from_raw_parts_mut;
 
+use mss_api::segment_pair_t;
 
 #[allow(soft_unstable)]
 #[allow(non_upper_case_globals)]
@@ -9,14 +10,33 @@ use std::slice::from_raw_parts_mut;
 #[allow(non_snake_case)]
 #[allow(deref_nullptr)]
 #[allow(dead_code)]
-mod mss_api;
+pub mod mss_api;
 
 mod unit_test;
 
+static PAGE_SIZE : u64 = 4096;
+    
 #[derive(Debug)]
 pub struct Error {
     code: i32,
     msg: String,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct Segment {
+    page_offset: u64,
+    page_count: u64,
+}
+
+impl Segment {
+    pub fn new(offset : usize, length: usize) -> Segment {
+        assert!(offset as u64 % PAGE_SIZE == 0);
+        Segment {
+            page_offset : offset as u64 / PAGE_SIZE,
+            page_count : length as u64 / PAGE_SIZE,
+        }
+    }
 }
 
 impl Error {
@@ -46,6 +66,7 @@ pub fn init(lcores: &str) -> Result<(), Error> {
     }
 }
 
+/// shutdown and clean up MSS
 pub fn shutdown() {
     unsafe { mss_api::mss_shutdown() }
 }
@@ -79,7 +100,6 @@ impl<'a> Drop for DpdkMemory<'a> {
     }
 }
 
-
 impl fmt::Display for DpdkMemory<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "DPDK-MEMORY: {:?} {}", self.ptr, self.len)
@@ -97,10 +117,33 @@ pub fn rte_malloc(tag: &str, len: usize, align: usize) -> Result<DpdkMemory, Err
     Ok(DpdkMemory::new(rptr, len))
 }
 
+/// allocate DPDK memory without the DpdkMemory wrapper
 pub fn raw_rte_malloc(tag: &str, len: usize, align: usize) -> *mut u8 {
     let c_tag = CString::new(tag).unwrap();
-    
+
     let rptr = unsafe { mss_api::mss_rte_malloc(c_tag.as_ptr(), len as u64, align as u32) };
     return rptr as *mut u8;
 }
-   
+
+/// allocate memory from MSS subsystem
+pub fn malloc(len: usize, align: usize) -> *mut ::std::os::raw::c_void {
+    unsafe { mss_api::mss_malloc(len as mss_api::size_t, align as mss_api::size_t) }
+}
+
+/// perform a snapshot
+pub fn snapshot(
+    ptr: u64,
+    segments: &[Segment],
+) -> Result<(), Error> {
+
+    match unsafe {
+        mss_api::mss_snapshot(
+            ptr as *const ::std::os::raw::c_void,
+            segments.as_ptr() as *const segment_pair_t,
+            segments.len() as mss_api::size_t,
+        )
+    } {
+        0 => Ok(()),
+        e => Err(Error::new(e, "mss_snapshot failed unexpectedly")),
+    }
+}

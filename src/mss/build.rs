@@ -3,7 +3,7 @@ extern crate bindgen;
 use std::path::Path;
 
 fn main() {
-    let header_path = "./mss_client_api.h";
+    let header_path = "./src/mss_client_api.h";
 
     println!("cargo:rerun-if-changed={}", header_path);
 

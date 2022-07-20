@@ -10,7 +10,7 @@ mod tests {
         crate::shutdown();
     }
 
-//    #[test]
+    //    #[test]
     fn test_alloc() {
         crate::init("0").unwrap();
         {

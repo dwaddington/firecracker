@@ -115,36 +115,39 @@ fn full_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), CreateSnapshot
 
 struct RegionProcessor {
     offset: usize,
+    base: u64,
+    segments: Vec<mss::Segment>,
 }
 
 impl<'a> RegionProcessor {
-    fn new() -> RegionProcessor {
-        RegionProcessor { offset: 0 }
+    fn new(base: u64) -> RegionProcessor {
+        RegionProcessor {
+            offset: 0,
+            base: base,
+            segments: Vec::with_capacity(10000), // TODO
+        }
     }
 }
 
 impl<'w> std::io::Write for RegionProcessor {
     /// Write applied to dirty pages (in batch)
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-//        let offset64 = self.offset / 8;
+        //        let offset64 = self.offset / 8;
         // let full_prior =
         //     bytemuck::cast_slice_mut::<u8, u64>(self.prior_full_snapshot.as_mut_slice());
         // let new_slice = bytemuck::cast_slice::<u8, u64>(buf);
         // let prior_slice = &mut full_prior[offset64..offset64 + new_slice.len()];
 
         debug!(
-            "XYZ: writing segment offset={} len={}",
+            "FC: writing segment base={:X} offset={} len={}",
+            self.base,
             self.offset,
             buf.len()
         );
 
-        // 64-bit iterator
-        // for i in 0..new_slice.len() {
-        //     // pretend to xor
-        //     let _ = new_slice[i] ^ prior_slice[i];
-        //     // do update
-        //     prior_slice[i] = new_slice[i];
-        // }
+        self.segments
+            .push(mss::Segment::new(self.offset, buf.len()));
+
         Ok(buf.len())
     }
 
@@ -170,7 +173,14 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         let dirty_bitmap = vmm.get_dirty_bitmap().expect("get dirty bitmap failed");
 
         let page_size = get_page_size().map_err(memory_snapshot::Error::PageSize)?;
-        let mut writer = RegionProcessor::new();
+
+        let base_addr = vmm
+            .guest_memory
+            .get_host_address(vm_memory::GuestAddress(0x0))
+            .unwrap();
+        debug!("VMM-guest memory host addr: {:?}", base_addr);
+
+        let mut writer = RegionProcessor::new(base_addr as u64);
 
         let time_start = Instant::now();
         let mut page_count: usize = 0;
@@ -221,10 +231,14 @@ fn dirtypage_memory_snapshot(vmm: &mut Vmm) -> std::result::Result<(), memory_sn
         //        }
 
         debug!(
-            "Completed DIRTY page iteration: time={}ms page-count={}",
+            "Completed DIRTY page iteration: time={}ms page-count={} segments={}",
             time_start.elapsed().as_millis(),
-            page_count
+            page_count,
+            writer.segments.len()
         );
+
+        /* trigger snapshot */
+        mss::snapshot(base_addr as u64, &writer.segments).expect("mss::snapshot failed");
     }
 
     Ok(())

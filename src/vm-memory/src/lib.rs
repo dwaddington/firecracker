@@ -121,8 +121,8 @@ fn build_dpdk_region(
     let page_size = utils::get_page_size().expect("Cannot retrieve page size.");
 
     /* allocate host memory from RTE */
-    let region_addr = mss::raw_rte_malloc("VM-guest", size, page_size);
-    println!("MSS: allocated VM-guest memory ADDR {:?}", region_addr);
+    let region_addr = mss::malloc(size, page_size);
+    println!(">>>>>>>>>>>>>>>>> MSS: allocated VM-guest memory ADDR {:?}", region_addr);
 
     let bitmap = match track_dirty_pages {
         true => Some(AtomicBitmap::with_len(size)),
